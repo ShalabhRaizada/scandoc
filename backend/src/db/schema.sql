@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS documents (
     confidence_score NUMERIC(5,2),
     metadata_json JSONB,
     trip_no INTEGER,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    token_cost NUMERIC(10, 6),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -145,3 +149,21 @@ CREATE INDEX IF NOT EXISTS idx_trips_upload_id ON trips(upload_id);
 -- To be run dynamically in PostgreSQL setup:
 -- ALTER TABLE documents ADD COLUMN IF NOT EXISTS search_vector tsvector;
 -- CREATE INDEX IF NOT EXISTS idx_documents_search_vector ON documents USING GIN(search_vector);
+
+
+-- Table: users
+CREATE TABLE IF NOT EXISTS users (
+    user_id UUID PRIMARY KEY,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: user_sessions
+CREATE TABLE IF NOT EXISTS user_sessions (
+    session_id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -4,6 +4,8 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { initDatabase } from './config/db';
 import apiRouter from './routes/api';
+import authRouter from './routes/auth';
+import usersRouter from './routes/users';
 
 // Load environment variables
 dotenv.config();
@@ -22,8 +24,10 @@ app.use(express.json());
 const uploadsPath = path.resolve(process.cwd(), 'uploads');
 app.use('/uploads', express.static(uploadsPath));
 
-// API router
+// API routers
 app.use('/api', apiRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/users', usersRouter);
 
 // Start server
 async function start() {

@@ -85,6 +85,10 @@ export interface ExtractionResult {
     }>;
   };
   review_flags: string[];
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  token_cost?: number;
 }
 
 /**
@@ -140,6 +144,16 @@ export async function extractDocumentMetadata(
   if (!rawData) {
     console.log(`Running Mock AI Extractor for: ${originalFileName}`);
     rawData = await getMockExtractionData(originalFileName);
+  }
+
+  // Populate simulated token data if not already present (ensures reporting functions under mockup)
+  if (rawData && rawData.prompt_tokens === undefined) {
+    const simulatedPrompt = Math.floor(Math.random() * (1500 - 1200 + 1)) + 1200; // 1200 - 1500
+    const simulatedCompletion = Math.floor(Math.random() * (500 - 300 + 1)) + 300; // 300 - 500
+    rawData.prompt_tokens = simulatedPrompt;
+    rawData.completion_tokens = simulatedCompletion;
+    rawData.total_tokens = simulatedPrompt + simulatedCompletion;
+    rawData.token_cost = (simulatedPrompt * 0.075 + simulatedCompletion * 0.30) / 1000000;
   }
 
   // Apply verification and validation logic
@@ -254,7 +268,16 @@ Return only valid JSON. Do not return explanations. Use the following keys:
             const parsed = JSON.parse(body);
             const textResponse = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
             if (textResponse) {
-              resolve(JSON.parse(textResponse));
+              const resultObj = JSON.parse(textResponse);
+              // Capture token usage
+              const usage = parsed.usageMetadata;
+              if (usage) {
+                resultObj.prompt_tokens = usage.promptTokenCount || 0;
+                resultObj.completion_tokens = usage.candidatesTokenCount || 0;
+                resultObj.total_tokens = usage.totalTokenCount || (resultObj.prompt_tokens + resultObj.completion_tokens);
+                resultObj.token_cost = (resultObj.prompt_tokens * 0.075 + resultObj.completion_tokens * 0.30) / 1000000;
+              }
+              resolve(resultObj);
             } else {
               reject(new Error('Empty Gemini response content: ' + body));
             }

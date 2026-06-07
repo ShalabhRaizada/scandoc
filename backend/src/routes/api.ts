@@ -9,6 +9,7 @@ import { query, queryOne, execute, getIsPostgres } from '../config/db';
 import { extractDocumentMetadata, ExtractionResult } from '../services/ai';
 import { getFilePath, renameDocumentLogically, preprocessImageIfNeeded } from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
+import { requireRoles } from '../middleware/auth';
 
 const router = Router();
 
@@ -57,20 +58,7 @@ async function createAuditLog(
   );
 }
 
-// Middleware: Role-Based Access Control (RBAC) Validation
-const requireRoles = (allowedRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const userRole = req.header('X-User-Role') || 'Viewer';
-    
-    if (allowedRoles.includes(userRole)) {
-      next();
-    } else {
-      res.status(403).json({
-        error: `Permission Denied. Role '${userRole}' does not have access to this resource.`,
-      });
-    }
-  };
-};
+// Middleware: Role-Based Access Control validation imported from middleware/auth
 
 /**
  * 10.1 Upload Batch API
@@ -261,8 +249,12 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
            extraction_status = $19,
            confidence_score = $20,
            metadata_json = $21,
+           prompt_tokens = $22,
+           completion_tokens = $23,
+           total_tokens = $24,
+           token_cost = $25,
            updated_at = CURRENT_TIMESTAMP
-       WHERE document_id = $22`,
+       WHERE document_id = $26`,
       [
         extractedData.document_type,
         extractedData.document_subtype,
@@ -285,6 +277,10 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
         extractedData.extraction_status,
         extractedData.confidence_score,
         extractedData, // JSONB
+        extractedData.prompt_tokens || 0,
+        extractedData.completion_tokens || 0,
+        extractedData.total_tokens || 0,
+        extractedData.token_cost || 0.0,
         documentId
       ]
     );
@@ -1588,6 +1584,43 @@ export async function runDuplicateCheckingAndFlagging(documentId: string): Promi
     console.error(`Error in runDuplicateCheckingAndFlagging for ${documentId}:`, err);
   }
 }
+
+/**
+ * GET /api/reports/token-usage
+ * Fetches token metrics and costs aggregates
+ */
+router.get('/reports/token-usage', requireRoles(['Admin', 'Ops User', 'Viewer', 'Auditor']), async (req: Request, res: Response) => {
+  try {
+    const stats = await queryOne(`
+      SELECT 
+        COUNT(document_id) as total_documents,
+        SUM(COALESCE(prompt_tokens, 0)) as total_prompt_tokens,
+        SUM(COALESCE(completion_tokens, 0)) as total_completion_tokens,
+        SUM(COALESCE(total_tokens, 0)) as total_tokens,
+        SUM(COALESCE(token_cost, 0.0)) as total_cost
+      FROM documents
+    `);
+
+    const totalDocs = stats ? Number(stats.total_documents || 0) : 0;
+    const totalPrompt = stats ? Number(stats.total_prompt_tokens || 0) : 0;
+    const totalCompletion = stats ? Number(stats.total_completion_tokens || 0) : 0;
+    const totalTokens = stats ? Number(stats.total_tokens || 0) : 0;
+    const totalCost = stats ? Number(stats.total_cost || 0.0) : 0.0;
+    const avgCost = totalDocs > 0 ? (totalCost / totalDocs) : 0.0;
+
+    res.json({
+      total_documents: totalDocs,
+      total_prompt_tokens: totalPrompt,
+      total_completion_tokens: totalCompletion,
+      total_tokens: totalTokens,
+      total_cost: totalCost,
+      average_cost_per_document: avgCost
+    });
+  } catch (err: any) {
+    console.error('Reports error:', err);
+    res.status(500).json({ error: 'Failed to retrieve token usage statistics.' });
+  }
+});
 
 export default router;
 

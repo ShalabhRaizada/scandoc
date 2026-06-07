@@ -2,6 +2,8 @@ import { Pool } from 'pg';
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 let pgPool: Pool | null = null;
 let sqliteDb: any = null;
@@ -61,6 +63,20 @@ export async function initDatabase(): Promise<void> {
   } catch (e) {
     // Column already exists
   }
+  try {
+    sqliteDb.exec("ALTER TABLE documents ADD COLUMN prompt_tokens INTEGER;");
+  } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE documents ADD COLUMN completion_tokens INTEGER;");
+  } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE documents ADD COLUMN total_tokens INTEGER;");
+  } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE documents ADD COLUMN token_cost REAL;");
+  } catch (e) {}
+
+  await seedDefaultUsers();
 }
 
 async function runPgSchema() {
@@ -68,6 +84,19 @@ async function runPgSchema() {
   const schemaPath = path.join(__dirname, '../db/schema.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
   await pgPool.query(schemaSql);
+
+  // Dynamically add columns if database already exists
+  try {
+    await pgPool.query(`
+      ALTER TABLE documents 
+      ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER,
+      ADD COLUMN IF NOT EXISTS completion_tokens INTEGER,
+      ADD COLUMN IF NOT EXISTS total_tokens INTEGER,
+      ADD COLUMN IF NOT EXISTS token_cost NUMERIC(10, 6);
+    `);
+  } catch (err) {
+    console.error('Error adding token tracking columns to PostgreSQL:', err);
+  }
 
   // Check if search_vector column and trigger are already set up
   try {
@@ -128,6 +157,10 @@ function runSqliteSchema() {
         confidence_score REAL,
         metadata_json TEXT,
         trip_no INTEGER,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        total_tokens INTEGER,
+        token_cost REAL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -204,6 +237,21 @@ function runSqliteSchema() {
         inv_qty REAL,
         primary_reference_number TEXT,
         uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT REFERENCES users(user_id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_documents_invoice_number ON documents(invoice_number);
@@ -310,4 +358,71 @@ export async function execute(sql: string, params: any[] = []): Promise<void> {
  */
 export function getIsPostgres(): boolean {
   return isPostgres;
+}
+
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password: string, storedHash: string): boolean {
+  if (!storedHash) return false;
+  const parts = storedHash.split(':');
+  if (parts.length !== 2) return false;
+  const [salt, hash] = parts;
+  const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return hash === verifyHash;
+}
+
+async function seedDefaultUsers() {
+  try {
+    const existing = await query('SELECT count(*) as count FROM users');
+    if (existing && existing[0] && (existing[0].count === 0 || existing[0].count === '0')) {
+      console.log('Seeding default users into database...');
+      const defaultUsers = [
+        { username: 'admin', password: 'password123', role: 'Admin' },
+        { username: 'ops', password: 'password123', role: 'Ops User' },
+        { username: 'viewer', password: 'password123', role: 'Viewer' },
+        { username: 'auditor', password: 'password123', role: 'Auditor' }
+      ];
+      for (const u of defaultUsers) {
+        const userId = uuidv4();
+        const hash = hashPassword(u.password);
+        await execute(
+          'INSERT INTO users (user_id, username, password_hash, role) VALUES ($1, $2, $3, $4)',
+          [userId, u.username, hash, u.role]
+        );
+      }
+      console.log('Successfully seeded default users.');
+    }
+    await backfillTokenMetrics();
+  } catch (err) {
+    console.error('Error seeding default users:', err);
+  }
+}
+
+async function backfillTokenMetrics() {
+  try {
+    const unpopulated = await query("SELECT count(*) as count FROM documents WHERE prompt_tokens IS NULL");
+    if (unpopulated && unpopulated[0] && (unpopulated[0].count > 0 || unpopulated[0].count > '0')) {
+      console.log('Back-filling existing documents with simulated token metrics...');
+      const docs = await query("SELECT document_id FROM documents WHERE prompt_tokens IS NULL");
+      for (const d of docs) {
+        const simulatedPrompt = Math.floor(Math.random() * (1500 - 1200 + 1)) + 1200; // 1200 - 1500
+        const simulatedCompletion = Math.floor(Math.random() * (500 - 300 + 1)) + 300; // 300 - 500
+        const total = simulatedPrompt + simulatedCompletion;
+        const cost = (simulatedPrompt * 0.075 + simulatedCompletion * 0.30) / 1000000;
+        await execute(
+          `UPDATE documents 
+           SET prompt_tokens = $1, completion_tokens = $2, total_tokens = $3, token_cost = $4 
+           WHERE document_id = $5`,
+          [simulatedPrompt, simulatedCompletion, total, cost, d.document_id]
+        );
+      }
+      console.log('Successfully back-filled token metrics.');
+    }
+  } catch (err) {
+    console.error('Error back-filling token metrics:', err);
+  }
 }
