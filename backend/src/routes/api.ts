@@ -1048,7 +1048,7 @@ router.get('/documents/:document_id/download', async (req: Request, res: Respons
     const user = req.header('X-User') || 'Viewer User';
     await createAuditLog(document_id, 'Download', null, { file: doc.stored_file_name }, user);
 
-    res.download(filePath, doc.original_file_name);
+    res.download(filePath, doc.stored_file_name || doc.original_file_name);
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: err.message });

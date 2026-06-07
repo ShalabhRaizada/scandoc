@@ -177,11 +177,20 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <h2 style={{ fontSize: '1.5rem', color: '#fff' }}>Review: {docData.original_file_name}</h2>
-          <span className={`status-badge status-${docData.extraction_status.toLowerCase().replace(/\s/g, '')}`}>
-            {docData.extraction_status}
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <h2 style={{ fontSize: '1.5rem', color: '#fff', margin: 0 }}>
+              Review: {docData.stored_file_name || docData.original_file_name}
+            </h2>
+            <span className={`status-badge status-${docData.extraction_status.toLowerCase().replace(/\s/g, '')}`} style={{ margin: 0 }}>
+              {docData.extraction_status}
+            </span>
+          </div>
+          {docData.stored_file_name && docData.stored_file_name !== docData.original_file_name && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              Original file: {docData.original_file_name}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button className="btn btn-secondary" onClick={handleDownloadFile}>

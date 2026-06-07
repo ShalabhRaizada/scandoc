@@ -287,9 +287,13 @@ export default function ProcessingStatus({
 
                 return (
                   <tr key={doc.document_id}>
-                    <td style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.original_file_name}>
-                      <div style={{ fontWeight: 500, color: '#fff' }}>{doc.original_file_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{formatSize(doc.file_size_bytes)}</div>
+                    <td style={{ maxWidth: '180px' }} title={`Original: ${doc.original_file_name}`}>
+                      <div style={{ fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {doc.stored_file_name || doc.original_file_name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {doc.stored_file_name && doc.stored_file_name !== doc.original_file_name ? `${doc.original_file_name} (${formatSize(doc.file_size_bytes)})` : formatSize(doc.file_size_bytes)}
+                      </div>
                     </td>
                     <td>{doc.document_type || <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td style={{ fontWeight: 600 }}>{doc.primary_reference_number || <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>

@@ -349,8 +349,15 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
                     <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                       {doc.document_id.slice(0, 8)}...
                     </td>
-                    <td style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.original_file_name}>
-                      <span style={{ fontWeight: 500, color: '#fff' }}>{doc.original_file_name}</span>
+                    <td style={{ maxWidth: '180px' }} title={`Original: ${doc.original_file_name}`}>
+                      <div style={{ fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {doc.stored_file_name || doc.original_file_name}
+                      </div>
+                      {doc.stored_file_name && doc.stored_file_name !== doc.original_file_name && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {doc.original_file_name}
+                        </div>
+                      )}
                     </td>
                     <td>{doc.document_type || '-'}</td>
                     <td>{doc.vehicle_number || '-'}</td>
