@@ -15,6 +15,66 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Rotate, Zoom, and Highlight state
+  const [zoom, setZoom] = useState(1.0);
+  const [rotation, setRotation] = useState(0);
+  const [highlightRegion, setHighlightRegion] = useState<any>(null);
+
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(prev + 0.25, 3.0));
+  };
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(prev - 0.25, 0.5));
+  };
+
+  const handleRotate = () => {
+    setRotation(prev => (prev + 90) % 360);
+  };
+
+  const triggerHighlight = (field: string, label: string, value: any) => {
+    const coordinateMap: Record<string, { top: number; left: number; width: number; height: number }> = {
+      document_type: { top: 3.5, left: 30, width: 40, height: 5 },
+      document_subtype: { top: 3.5, left: 30, width: 40, height: 5 },
+      transporter_name: { top: 8, left: 10, width: 40, height: 6 },
+      primary_reference_number: { top: 10, left: 60, width: 35, height: 6 },
+      lr_number: { top: 10, left: 60, width: 35, height: 6 },
+      consignment_note_number: { top: 10, left: 60, width: 35, height: 6 },
+      document_date: { top: 16, left: 60, width: 35, height: 5 },
+      consignor_name: { top: 22, left: 10, width: 38, height: 8 },
+      consignee_name: { top: 22, left: 52, width: 38, height: 8 },
+      vehicle_number: { top: 32, left: 10, width: 38, height: 6 },
+      eway_bill_number: { top: 32, left: 52, width: 38, height: 6 },
+      delivery_number: { top: 38, left: 10, width: 38, height: 6 },
+      invoice_number: { top: 38, left: 52, width: 38, height: 6 },
+      gst_invoice_number: { top: 38, left: 52, width: 38, height: 6 },
+      plant_code: { top: 44, left: 10, width: 38, height: 6 },
+      vendor_code: { top: 44, left: 52, width: 38, height: 6 },
+      line_items: { top: 52, left: 8, width: 84, height: 25 },
+      seal_detected: { top: 8, left: 75, width: 20, height: 12 },
+      signature_detected: { top: 82, left: 60, width: 30, height: 10 },
+      handwriting_detected: { top: 82, left: 10, width: 45, height: 10 },
+    };
+
+    let coords = coordinateMap[field];
+    if (!coords) return;
+
+    if (field === 'seal_detected' && metadata?.visual_tags?.seal_location) {
+      const loc = metadata.visual_tags.seal_location.toLowerCase();
+      if (loc.includes('left')) {
+        coords = { top: 8, left: 5, width: 20, height: 12 };
+      } else if (loc.includes('bottom')) {
+        coords = { top: 78, left: 75, width: 20, height: 12 };
+      }
+    }
+
+    setHighlightRegion({
+      ...coords,
+      label,
+      value: value ? String(value) : 'N/A',
+    });
+  };
+
   useEffect(() => {
     fetchMetadata();
   }, [documentId]);
@@ -222,26 +282,170 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
         
         {/* Left Side: Document Preview */}
         <div className="glass-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%', padding: '12px' }}>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
+          <style>{`
+            @keyframes pulse-glow {
+              0% {
+                box-shadow: 0 0 8px #fbbf24, inset 0 0 8px rgba(251, 191, 36, 0.3);
+                border-color: rgba(251, 191, 36, 0.8);
+              }
+              100% {
+                box-shadow: 0 0 20px #fbbf24, inset 0 0 20px rgba(251, 191, 36, 0.6);
+                border-color: rgba(251, 191, 36, 1);
+              }
+            }
+            .highlight-label-clickable {
+              cursor: pointer;
+              transition: all 0.2s ease;
+              padding: 2px 6px;
+              border-radius: 4px;
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+            }
+            .highlight-label-clickable:hover {
+              color: var(--color-primary) !important;
+              background: rgba(6, 182, 212, 0.08);
+              text-decoration: underline;
+            }
+            .highlight-label-clickable::after {
+              content: '🎯';
+              font-size: 0.8rem;
+              opacity: 0.6;
+            }
+          `}</style>
+
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Original Document Preview ({docData.file_type.toUpperCase()})</span>
             <a href={fileUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
               Open in new tab ↗
             </a>
           </div>
-          <div style={{ flexGrow: 1, background: '#1e293b', borderRadius: 'var(--radius-sm)', overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            {isPdf ? (
-              <iframe
-                src={fileUrl}
-                title="PDF Preview"
-                style={{ width: '100%', height: '100%', border: 'none' }}
-              />
-            ) : (
-              <img
-                src={fileUrl}
-                alt="Document visual"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-              />
+
+          {/* Viewer Toolbar */}
+          <div style={{ 
+            display: 'flex', 
+            gap: '8px', 
+            padding: '8px 12px', 
+            background: 'rgba(0,0,0,0.2)', 
+            border: '1px solid rgba(255,255,255,0.05)', 
+            borderRadius: 'var(--radius-sm)', 
+            marginBottom: '10px', 
+            alignItems: 'center', 
+            justifyContent: 'space-between' 
+          }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.8rem', minWidth: '32px' }} 
+                onClick={handleZoomOut} 
+                title="Zoom Out"
+              >
+                ➖
+              </button>
+              <span style={{ fontSize: '0.8rem', color: '#fff', minWidth: '45px', textAlign: 'center', fontWeight: 'bold' }}>
+                {Math.round(zoom * 100)}%
+              </span>
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.8rem', minWidth: '32px' }} 
+                onClick={handleZoomIn} 
+                title="Zoom In"
+              >
+                ➕
+              </button>
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.8rem', marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} 
+                onClick={handleRotate} 
+                title="Rotate 90°"
+              >
+                🔄 Rotate
+              </button>
+            </div>
+            {highlightRegion && (
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 8px', fontSize: '0.8rem', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#f87171', background: 'rgba(239, 68, 68, 0.05)' }} 
+                onClick={() => setHighlightRegion(null)}
+              >
+                Clear Highlight
+              </button>
             )}
+          </div>
+
+          <div style={{ 
+            flexGrow: 1, 
+            background: '#1e293b', 
+            borderRadius: 'var(--radius-sm)', 
+            overflow: 'auto', 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center',
+            position: 'relative',
+            padding: '20px'
+          }}>
+            <div style={{ 
+              position: 'relative', 
+              display: isPdf ? 'block' : 'inline-block', 
+              width: isPdf ? '100%' : 'auto',
+              height: isPdf ? '100%' : 'auto',
+              transform: `rotate(${rotation}deg) scale(${zoom})`, 
+              transformOrigin: 'center center',
+              transition: 'transform 0.2s ease',
+              margin: rotation % 180 !== 0 ? '120px 0' : '0'
+            }}>
+              {isPdf ? (
+                <iframe
+                  src={fileUrl}
+                  title="PDF Preview"
+                  style={{ width: '100%', height: '100%', minHeight: '500px', border: 'none', background: '#fff', display: 'block' }}
+                />
+              ) : (
+                <img
+                  src={fileUrl}
+                  alt="Document visual"
+                  style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 280px)', objectFit: 'contain', display: 'block' }}
+                />
+              )}
+
+              {/* Bounding box highlight overlay */}
+              {highlightRegion && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: `${highlightRegion.top}%`,
+                    left: `${highlightRegion.left}%`,
+                    width: `${highlightRegion.width}%`,
+                    height: `${highlightRegion.height}%`,
+                    border: '3px solid #fbbf24',
+                    boxShadow: '0 0 15px #fbbf24, inset 0 0 15px rgba(251, 191, 36, 0.4)',
+                    backgroundColor: 'rgba(251, 191, 36, 0.15)',
+                    borderRadius: '4px',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                    animation: 'pulse-glow 1.5s infinite alternate',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '-32px',
+                      left: '0',
+                      background: '#fbbf24',
+                      color: '#000',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      whiteSpace: 'nowrap',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                    }}
+                  >
+                    🎯 {highlightRegion.label}: {highlightRegion.value}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -277,7 +481,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                   </h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div>
-                      <label>Document Type</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('document_type', 'Document Type', metadata.document_type)}>Document Type</label>
                       <input
                         type="text"
                         value={metadata.document_type || ''}
@@ -286,7 +490,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Document Subtype</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('document_subtype', 'Document Subtype', metadata.document_subtype)}>Document Subtype</label>
                       <input
                         type="text"
                         value={metadata.document_subtype || ''}
@@ -295,7 +499,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Document Date</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('document_date', 'Document Date', metadata.document_date)}>Document Date</label>
                       <input
                         type="date"
                         value={metadata.document_date || ''}
@@ -304,7 +508,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Primary Reference Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('primary_reference_number', 'Primary Reference Number', metadata.primary_reference_number)}>Primary Reference Number</label>
                       <input
                         type="text"
                         value={metadata.primary_reference_number || ''}
@@ -322,7 +526,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                   </h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div>
-                      <label>Vehicle Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('vehicle_number', 'Vehicle Number', metadata.logistics?.vehicle_number)}>Vehicle Number</label>
                       <input
                         type="text"
                         value={metadata.logistics?.vehicle_number || ''}
@@ -331,7 +535,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Consignment Note / LR Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('lr_number', 'Consignment Note / LR Number', metadata.logistics?.consignment_note_number || metadata.logistics?.lr_number)}>Consignment Note / LR Number</label>
                       <input
                         type="text"
                         value={metadata.logistics?.consignment_note_number || metadata.logistics?.lr_number || ''}
@@ -343,7 +547,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Delivery Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('delivery_number', 'Delivery Number', metadata.logistics?.delivery_number)}>Delivery Number</label>
                       <input
                         type="text"
                         value={metadata.logistics?.delivery_number || ''}
@@ -352,7 +556,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>GST Invoice Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('invoice_number', 'GST Invoice Number', metadata.logistics?.gst_invoice_number || metadata.logistics?.invoice_number)}>GST Invoice Number</label>
                       <input
                         type="text"
                         value={metadata.logistics?.gst_invoice_number || metadata.logistics?.invoice_number || ''}
@@ -364,7 +568,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>E-way Bill Number</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('eway_bill_number', 'E-way Bill Number', metadata.logistics?.eway_bill_number)}>E-way Bill Number</label>
                       <input
                         type="text"
                         value={metadata.logistics?.eway_bill_number || ''}
@@ -373,7 +577,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Plant / Vendor Code</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('plant_code', 'Plant / Vendor Code', `Plant: ${metadata.logistics?.plant_code || ''}, Vendor: ${metadata.logistics?.vendor_code || ''}`)}>Plant / Vendor Code</label>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <input
                           type="text"
@@ -401,7 +605,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                   </h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div>
-                      <label>Consignor Name</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('consignor_name', 'Consignor Name', metadata.parties?.consignor?.name)}>Consignor Name</label>
                       <input
                         type="text"
                         value={metadata.parties?.consignor?.name || ''}
@@ -410,7 +614,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Consignee Name</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('consignee_name', 'Consignee Name', metadata.parties?.consignee?.name)}>Consignee Name</label>
                       <input
                         type="text"
                         value={metadata.parties?.consignee?.name || ''}
@@ -419,7 +623,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                       />
                     </div>
                     <div>
-                      <label>Transporter Name</label>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('transporter_name', 'Transporter Name', metadata.parties?.transporter?.name)}>Transporter Name</label>
                       <input
                         type="text"
                         value={metadata.parties?.transporter?.name || ''}
@@ -436,7 +640,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
             {activeTab === 'items' && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ fontSize: '1rem', color: '#fff' }}>Extracted Line Items</h3>
+                  <h3 className="highlight-label-clickable" style={{ fontSize: '1rem', color: '#fff', margin: 0 }} onClick={() => triggerHighlight('line_items', 'Line Items Table', `Count: ${metadata.line_items?.length || 0}`)}>Extracted Line Items</h3>
                   {isEditable && (
                     <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={addLineItem}>
                       + Add Item
@@ -557,7 +761,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                     style={{ width: '20px', height: '20px', marginTop: '2px', cursor: isEditable ? 'pointer' : 'default' }}
                   />
                   <div style={{ flexGrow: 1 }}>
-                    <div style={{ fontWeight: 600, color: '#fff' }}>Seal / Stamp Detected</div>
+                    <div className="highlight-label-clickable" style={{ fontWeight: 600, color: '#fff' }} onClick={() => triggerHighlight('seal_detected', 'Seal / Stamp', metadata.visual_tags?.seal_text || 'Detected')}>Seal / Stamp Detected</div>
                     {metadata.visual_tags?.seal_detected && (
                       <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         <div>
@@ -608,7 +812,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                     style={{ width: '20px', height: '20px', marginTop: '2px', cursor: isEditable ? 'pointer' : 'default' }}
                   />
                   <div style={{ flexGrow: 1 }}>
-                    <div style={{ fontWeight: 600, color: '#fff' }}>Signature Detected</div>
+                    <div className="highlight-label-clickable" style={{ fontWeight: 600, color: '#fff' }} onClick={() => triggerHighlight('signature_detected', 'Signature', `Location: ${metadata.visual_tags?.signature_location || 'bottom-right'}`)}>Signature Detected</div>
                     {metadata.visual_tags?.signature_detected && (
                       <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
                         <div>
@@ -647,7 +851,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                     style={{ width: '20px', height: '20px', marginTop: '2px', cursor: isEditable ? 'pointer' : 'default' }}
                   />
                   <div style={{ flexGrow: 1 }}>
-                    <div style={{ fontWeight: 600, color: '#fff' }}>Handwritten Notes / Date / Truck Number Detected</div>
+                    <div className="highlight-label-clickable" style={{ fontWeight: 600, color: '#fff' }} onClick={() => triggerHighlight('handwriting_detected', 'Handwritten Info', 'Handwritten Notes / Date / Truck Number')}>Handwritten Notes / Date / Truck Number Detected</div>
                     
                     {metadata.visual_tags?.handwriting_detected && (
                       <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
