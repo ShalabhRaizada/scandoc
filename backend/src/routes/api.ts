@@ -911,6 +911,7 @@ router.get('/documents/search', async (req: Request, res: Response) => {
     seal_detected,
     signature_detected,
     handwriting_detected,
+    trip_nos,
     q, // Free text query
   } = req.query;
 
@@ -981,6 +982,19 @@ router.get('/documents/search', async (req: Request, res: Response) => {
       sql += ` AND handwriting_detected = $${pCount}`;
       params.push(handwriting_detected === 'true' || handwriting_detected === '1');
       pCount++;
+    }
+
+    if (trip_nos && trip_nos.toString().trim() !== '') {
+      const tripList = trip_nos.toString().split(',')
+        .map((s: string) => parseInt(s.trim(), 10))
+        .filter((n: number) => !isNaN(n));
+      
+      if (tripList.length > 0) {
+        const placeholders = tripList.map((_, i) => `$${pCount + i}`).join(',');
+        sql += ` AND trip_no IN (${placeholders})`;
+        params.push(...tripList);
+        pCount += tripList.length;
+      }
     }
 
     // Full-Text Search or Free Text search

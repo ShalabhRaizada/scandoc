@@ -25,6 +25,7 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
   const [signatureDetected, setSignatureDetected] = useState('');
   const [handwritingDetected, setHandwritingDetected] = useState('');
   const [status, setStatus] = useState('');
+  const [tripNos, setTripNos] = useState('');
 
   // Run initial search on mount
   useEffect(() => {
@@ -49,7 +50,8 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
       if (sealDetected) params.append('seal_detected', sealDetected);
       if (signatureDetected) params.append('signature_detected', signatureDetected);
       if (handwritingDetected) params.append('handwriting_detected', handwritingDetected);
-      if (status) params.append('status', status); // Note: we'll handle status if needed, though search route handles it
+      if (status) params.append('status', status);
+      if (tripNos) params.append('trip_nos', tripNos);
 
       const res = await fetch(`http://localhost:3001/api/documents/search?${params.toString()}`);
       if (!res.ok) throw new Error('Search failed');
@@ -84,6 +86,7 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
     setSignatureDetected('');
     setHandwritingDetected('');
     setStatus('');
+    setTripNos('');
     setDocuments([]);
     setTotalResults(0);
   };
@@ -193,6 +196,10 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+            <div>
+              <label>Trip Number(s) (comma separated)</label>
+              <input type="text" placeholder="e.g. 5138819, 5139053" value={tripNos} onChange={(e) => setTripNos(e.target.value)} />
+            </div>
             <div>
               <label>Invoice Number</label>
               <input type="text" placeholder="e.g. 300710276" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} />
@@ -318,6 +325,7 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
                 <th>Sig</th>
                 <th>Hndwrt</th>
                 <th>Confidence</th>
+                <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -383,9 +391,12 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
                         {doc.handwriting_detected ? 'Yes' : 'No'}
                       </span>
                     </td>
+                    <td style={{ fontWeight: 'bold', color: '#fff' }}>
+                      {Math.round(doc.confidence_score * 100)}%
+                    </td>
                     <td>
                       <span className={getStatusClass(doc.extraction_status)}>
-                        {Math.round(doc.confidence_score * 100)}%
+                        {doc.extraction_status}
                       </span>
                     </td>
                     <td>
