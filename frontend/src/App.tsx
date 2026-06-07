@@ -8,6 +8,7 @@ import TripDashboard from './components/TripDashboard';
 import Login from './components/Login';
 import CostReport from './components/CostReport';
 import AdminConsole from './components/AdminConsole';
+import { getApiBaseUrl } from './config';
 
 type ActiveTab = 'upload' | 'status' | 'search' | 'semantic' | 'trips' | 'reports' | 'admin';
 type UserRole = 'Admin' | 'Ops User' | 'Viewer' | 'Auditor' | 'API User';
@@ -17,7 +18,12 @@ const originalFetch = window.fetch;
 window.fetch = function (input, init) {
   const token = localStorage.getItem('scandoc_session');
   if (token) {
-    const isApiRequest = typeof input === 'string' && (input.startsWith('http://localhost:3001') || input.startsWith('/api'));
+    const apiBase = getApiBaseUrl();
+    const isApiRequest = typeof input === 'string' && (
+      (apiBase && input.startsWith(apiBase)) || 
+      input.startsWith('/api') || 
+      input.startsWith('http://localhost:3001')
+    );
     if (isApiRequest) {
       init = init || {};
       init.headers = init.headers || {};
@@ -55,7 +61,7 @@ export default function App() {
         return;
       }
       try {
-        const res = await originalFetch('http://localhost:3001/api/auth/me', {
+        const res = await originalFetch(`${getApiBaseUrl()}/api/auth/me`, {
           headers: {
             'Authorization': `Bearer ${sessionToken}`
           }
@@ -97,7 +103,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await originalFetch('http://localhost:3001/api/auth/logout', {
+      await originalFetch(`${getApiBaseUrl()}/api/auth/logout`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${sessionToken}`

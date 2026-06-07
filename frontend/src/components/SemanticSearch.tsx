@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState } from 'react';
 
 interface SemanticSearchProps {
@@ -22,7 +23,7 @@ export default function SemanticSearch({ currentRole, onViewDocument, onEditDocu
     setHasSearched(true);
 
     try {
-      const res = await fetch(`http://localhost:3001/api/documents/semantic-search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`${getApiBaseUrl()}/api/documents/semantic-search?q=${encodeURIComponent(q)}`);
       if (!res.ok) {
         throw new Error('Semantic search failed. Please try again.');
       }
@@ -37,11 +38,11 @@ export default function SemanticSearch({ currentRole, onViewDocument, onEditDocu
   };
 
   const handleDownloadFile = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/download`, '_blank');
   };
 
   const handleDownloadJson = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/metadata/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/metadata/download`, '_blank');
   };
 
   const getSimilarityBadgeClass = (score: number) => {

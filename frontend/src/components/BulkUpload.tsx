@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useRef } from 'react';
 
 interface BulkUploadProps {
@@ -96,7 +97,7 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
 
     try {
       // 1. Upload Batch
-      const uploadRes = await fetch('http://localhost:3001/api/document-batches/upload', {
+      const uploadRes = await fetch(`${getApiBaseUrl()}/api/document-batches/upload`, {
         method: 'POST',
         headers: {
           'X-User-Role': currentRole,
@@ -113,7 +114,7 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
       const batchId = uploadResult.batch_id;
 
       // 2. Start Extraction asynchronously
-      const extractRes = await fetch(`http://localhost:3001/api/document-batches/${batchId}/extract`, {
+      const extractRes = await fetch(`${getApiBaseUrl()}/api/document-batches/${batchId}/extract`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

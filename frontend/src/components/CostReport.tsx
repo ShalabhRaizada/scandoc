@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useEffect } from 'react';
 
 interface ReportStats {
@@ -20,7 +21,7 @@ export default function CostReport() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('http://localhost:3001/api/reports/token-usage', {
+      const res = await fetch(`${getApiBaseUrl()}/api/reports/token-usage`, {
         headers: {
           'Authorization': `Bearer ${getSessionToken()}`
         }

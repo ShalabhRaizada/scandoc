@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import React, { useState } from 'react';
 
 interface LoginProps {
@@ -21,7 +22,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:3001/api/auth/login', {
+      const res = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

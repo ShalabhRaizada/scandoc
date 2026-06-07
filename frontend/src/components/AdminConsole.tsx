@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import React, { useState, useEffect } from 'react';
 
 interface User {
@@ -31,7 +32,7 @@ export default function AdminConsole() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('http://localhost:3001/api/users', {
+      const res = await fetch(`${getApiBaseUrl()}/api/users`, {
         headers: {
           'Authorization': `Bearer ${getSessionToken()}`
         }
@@ -68,7 +69,7 @@ export default function AdminConsole() {
     setSuccess(null);
 
     try {
-      const res = await fetch('http://localhost:3001/api/users', {
+      const res = await fetch(`${getApiBaseUrl()}/api/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,7 +112,7 @@ export default function AdminConsole() {
     setSuccess(null);
 
     try {
-      const res = await fetch(`http://localhost:3001/api/users/${editingUserId}`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/users/${editingUserId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -149,7 +150,7 @@ export default function AdminConsole() {
     setSuccess(null);
 
     try {
-      const res = await fetch(`http://localhost:3001/api/users/${userId}`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/users/${userId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${getSessionToken()}`

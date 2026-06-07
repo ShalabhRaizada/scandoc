@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useEffect } from 'react';
 
 interface DocumentReviewProps {
@@ -82,7 +83,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
   const fetchMetadata = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:3001/api/documents/${documentId}/metadata`);
+      const res = await fetch(`${getApiBaseUrl()}/api/documents/${documentId}/metadata`);
       if (!res.ok) throw new Error('Failed to fetch document metadata');
       const data = await res.json();
       setDocData(data);
@@ -179,7 +180,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
     };
 
     try {
-      const res = await fetch(`http://localhost:3001/api/documents/${documentId}/metadata`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/documents/${documentId}/metadata`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -213,12 +214,12 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
 
   const handleDownloadFile = () => {
     if (!docData) return;
-    window.open(`http://localhost:3001/api/documents/${documentId}/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${documentId}/download`, '_blank');
   };
 
   const handleDownloadJson = () => {
     if (!docData) return;
-    window.open(`http://localhost:3001/api/documents/${documentId}/metadata/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${documentId}/metadata/download`, '_blank');
   };
 
   if (loading) {
@@ -231,7 +232,7 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
   }
 
   const isEditable = currentRole === 'Admin' || currentRole === 'Ops User';
-  const fileUrl = docData ? `http://localhost:3001/uploads/${docData.stored_file_name}` : '';
+  const fileUrl = docData ? `${getApiBaseUrl()}/uploads/${docData.stored_file_name}` : '';
   const isPdf = docData?.file_type?.toLowerCase() === 'pdf';
 
   return (

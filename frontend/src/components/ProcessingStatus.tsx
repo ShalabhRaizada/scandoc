@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useEffect } from 'react';
 
 interface Document {
@@ -88,7 +89,7 @@ export default function ProcessingStatus({
       // Wait, is there a GET /api/document-batches endpoint? No, but let's query all audit logs or search
       // to see. Wait! We can add a GET /api/document-batches endpoint in api.ts to make batch list clean,
       // or we can fetch them. Let's add GET /api/document-batches to api.ts so the batch list is fully populated.
-      const res = await fetch('http://localhost:3001/api/document-batches');
+      const res = await fetch(`${getApiBaseUrl()}/api/document-batches`);
       if (res.ok) {
         const data = await res.json();
         setBatches(data);
@@ -109,13 +110,13 @@ export default function ProcessingStatus({
 
     try {
       // Fetch Stats
-      const statsRes = await fetch(`http://localhost:3001/api/document-batches/${activeBatchId}/status`);
+      const statsRes = await fetch(`${getApiBaseUrl()}/api/document-batches/${activeBatchId}/status`);
       if (!statsRes.ok) throw new Error('Failed to fetch batch status');
       const statsData = await statsRes.json();
       setBatchStats(statsData);
 
       // Fetch Documents
-      const docsRes = await fetch(`http://localhost:3001/api/document-batches/${activeBatchId}/documents`);
+      const docsRes = await fetch(`${getApiBaseUrl()}/api/document-batches/${activeBatchId}/documents`);
       if (!docsRes.ok) throw new Error('Failed to fetch batch documents');
       const docsData = await docsRes.json();
       setDocuments(docsData);
@@ -130,11 +131,11 @@ export default function ProcessingStatus({
   };
 
   const handleDownloadFile = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/download`, '_blank');
   };
 
   const handleDownloadJson = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/metadata/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/metadata/download`, '_blank');
   };
 
   const getStatusClass = (status: string) => {

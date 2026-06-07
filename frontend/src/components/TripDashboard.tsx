@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useEffect, useRef, Fragment } from 'react';
 
 interface TripUpload {
@@ -55,7 +56,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
 
   const fetchUploads = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/trips/uploads');
+      const res = await fetch(`${getApiBaseUrl()}/api/trips/uploads`);
       if (res.ok) {
         const data = await res.json();
         setUploads(data);
@@ -68,8 +69,8 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
   const fetchTrips = async () => {
     try {
       const url = searchQuery.trim() 
-        ? `http://localhost:3001/api/trips?search=${encodeURIComponent(searchQuery)}`
-        : 'http://localhost:3001/api/trips';
+        ? `${getApiBaseUrl()}/api/trips?search=${encodeURIComponent(searchQuery)}`
+        : `${getApiBaseUrl()}/api/trips`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -119,7 +120,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
     formData.append('uploaded_by', `${currentRole} User`);
 
     try {
-      const res = await fetch('http://localhost:3001/api/trips/upload', {
+      const res = await fetch(`${getApiBaseUrl()}/api/trips/upload`, {
         method: 'POST',
         headers: {
           'X-User-Role': currentRole,
@@ -152,7 +153,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
     }
 
     try {
-      const res = await fetch(`http://localhost:3001/api/trips/uploads/${uploadId}`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/trips/uploads/${uploadId}`, {
         method: 'DELETE',
         headers: {
           'X-User-Role': currentRole,

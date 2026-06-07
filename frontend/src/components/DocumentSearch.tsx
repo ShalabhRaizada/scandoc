@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../config';
 import { useState, useEffect } from 'react';
 
 interface DocumentSearchProps {
@@ -53,7 +54,7 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
       if (status) params.append('status', status);
       if (tripNos) params.append('trip_nos', tripNos);
 
-      const res = await fetch(`http://localhost:3001/api/documents/search?${params.toString()}`);
+      const res = await fetch(`${getApiBaseUrl()}/api/documents/search?${params.toString()}`);
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       
@@ -100,18 +101,18 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
   }, [documents]);
 
   const handleDownloadFile = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/download`, '_blank');
   };
 
   const handleDownloadJson = (docId: string) => {
-    window.open(`http://localhost:3001/api/documents/${docId}/metadata/download`, '_blank');
+    window.open(`${getApiBaseUrl()}/api/documents/${docId}/metadata/download`, '_blank');
   };
 
   const handleBatchDownload = async () => {
     if (selectedDocIds.length === 0) return;
     setDownloading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/documents/batch-download', {
+      const response = await fetch(`${getApiBaseUrl()}/api/documents/batch-download`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
