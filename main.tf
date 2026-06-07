@@ -44,7 +44,7 @@ resource "google_sql_database_instance" "postgres_instance" {
   region           = var.region
 
   settings {
-    tier = "db-f1-micro" # Developer micro instance, scale up to db-g1-small or larger for production
+    tier = "db-g1-small" # Developer small instance, scale up for production
     backup_configuration {
       enabled = true
     }
