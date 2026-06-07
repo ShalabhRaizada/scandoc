@@ -15,6 +15,12 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "gemini_api_key" {
+  type        = string
+  description = "The Google Gemini API Key"
+  sensitive   = true
+}
+
 # 1. Cloud Storage Bucket for Document Storage
 resource "google_storage_bucket" "doc_bucket" {
   name          = "scandoc-docs-vault-${var.project_id}"
@@ -37,6 +43,11 @@ resource "google_secret_manager_secret" "gemini_key" {
   }
 }
 
+resource "google_secret_manager_secret_version" "gemini_key_version" {
+  secret      = google_secret_manager_secret.gemini_key.id
+  secret_data = var.gemini_api_key
+}
+
 # 3. Cloud SQL PostgreSQL Database
 resource "google_sql_database_instance" "postgres_instance" {
   name             = "scandoc-postgres-db"
@@ -57,6 +68,12 @@ resource "google_sql_database" "scandoc_db" {
   instance = google_sql_database_instance.postgres_instance.name
 }
 
+resource "google_sql_user" "postgres_user" {
+  name     = "postgres"
+  instance = google_sql_database_instance.postgres_instance.name
+  password = "scandoc-secure-password-2026"
+}
+
 # 4. Artifact Registry Repository
 resource "google_artifact_registry_repository" "docker_repo" {
   location      = var.region
@@ -65,7 +82,22 @@ resource "google_artifact_registry_repository" "docker_repo" {
   format        = "DOCKER"
 }
 
-# 5. Cloud Run Backend Service
+# 5. IAM Access Configuration for Cloud Run Service Account
+data "google_project" "project" {}
+
+resource "google_secret_manager_secret_iam_member" "secret_accessor" {
+  secret_id = google_secret_manager_secret.gemini_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "cloudsql_client" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
+}
+
+# 6. Cloud Run Backend Service
 resource "google_cloud_run_v2_service" "backend_service" {
   name     = "scandoc-backend"
   location = var.region
@@ -92,11 +124,42 @@ resource "google_cloud_run_v2_service" "backend_service" {
         name  = "DB_DATABASE"
         value = google_sql_database.scandoc_db.name
       }
+      env {
+        name  = "DB_USER"
+        value = "postgres"
+      }
+      env {
+        name  = "DB_PASSWORD"
+        value = "scandoc-secure-password-2026"
+      }
+      env {
+        name  = "DB_PORT"
+        value = "5432"
+      }
+      env {
+        name = "GEMINI_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.gemini_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
+      }
+    }
+    volumes {
+      name = "cloudsql"
+      cloud_sql_instance {
+        instances = [google_sql_database_instance.postgres_instance.connection_name]
+      }
     }
   }
 }
 
-# 6. Cloud Run Frontend Service
+# 7. Cloud Run Frontend Service
 resource "google_cloud_run_v2_service" "frontend_service" {
   name     = "scandoc-frontend"
   location = var.region
