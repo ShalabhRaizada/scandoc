@@ -601,7 +601,7 @@ router.get('/document-batches/:batch_id/documents', async (req: Request, res: Re
               seal_detected, signature_detected, handwriting_detected,
               extraction_status, confidence_score, trip_no, created_at
        FROM documents 
-       WHERE batch_id = $1 AND extraction_status != 'Manually Approved'
+       WHERE batch_id = $1 AND extraction_status NOT IN ('Manually Approved', 'Approved')
        ORDER BY created_at ASC`,
       [batch_id]
     );
@@ -702,16 +702,18 @@ router.put(
         flags.push('Vehicle number is missing');
       }
 
-      if (flags.length === 0) {
-        if (newStatus === 'Needs Review' || newStatus === 'Approved' || newStatus === 'Manually Approved') {
-          newStatus = 'Manually Approved';
-        }
-      } else {
-        newStatus = 'Needs Review';
-      }
+      const isUserApproval = (newStatus === 'Approved' || newStatus === 'Manually Approved');
 
-      if (newStatus === 'Approved') {
+      if (isUserApproval) {
         newStatus = 'Manually Approved';
+      } else {
+        if (flags.length === 0) {
+          if (newStatus === 'Needs Review') {
+            newStatus = 'Manually Approved';
+          }
+        } else {
+          newStatus = 'Needs Review';
+        }
       }
 
       // Sync status into the metadata_json before saving/database write
