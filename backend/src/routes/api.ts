@@ -9,9 +9,12 @@ import { query, queryOne, execute, getIsPostgres } from '../config/db';
 import { extractDocumentMetadata, ExtractionResult } from '../services/ai';
 import { getFilePath, renameDocumentLogically, preprocessImageIfNeeded } from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
-import { requireRoles } from '../middleware/auth';
+import { requireRoles, authenticateToken } from '../middleware/auth';
 
 const router = Router();
+
+// Secure all API endpoints behind token authentication
+router.use(authenticateToken);
 
 // Configure Multer for File Uploads
 const storage = multer.diskStorage({
