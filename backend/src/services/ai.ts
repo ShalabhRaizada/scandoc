@@ -383,10 +383,48 @@ function getMimeType(filePath: string): string {
 }
 
 /**
+ * Helper to ensure a value is converted to a string safely.
+ * Handles objects, numbers, booleans, and null/undefined values.
+ */
+function ensureString(val: any): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    const innerVal = val.value !== undefined ? val.value : 
+                     (val.text !== undefined ? val.text : 
+                     (val.name !== undefined ? val.name : null));
+    if (innerVal !== null && innerVal !== val) {
+      return ensureString(innerVal);
+    }
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
+/**
  * Perform Extraction validations and post-processing
  */
 function validateAndPostProcess(raw: any, originalName: string): ExtractionResult {
   const result = { ...raw } as ExtractionResult;
+
+  // Normalize key fields to strings to prevent runtime .trim() crashes on non-string AI outputs
+  result.document_type = ensureString(result.document_type);
+  result.document_subtype = ensureString(result.document_subtype);
+  result.primary_reference_number = ensureString(result.primary_reference_number);
+  
+  if (result.visual_tags) {
+    result.visual_tags.seal_text = ensureString(result.visual_tags.seal_text);
+  }
+  
+  if (result.logistics) {
+    result.logistics.vehicle_number = ensureString(result.logistics.vehicle_number);
+    result.logistics.invoice_number = ensureString(result.logistics.invoice_number);
+    result.logistics.gst_invoice_number = ensureString(result.logistics.gst_invoice_number);
+    result.logistics.lr_number = ensureString(result.logistics.lr_number);
+    result.logistics.consignment_note_number = ensureString(result.logistics.consignment_note_number);
+    result.logistics.delivery_number = ensureString(result.logistics.delivery_number);
+    result.logistics.eway_bill_number = ensureString(result.logistics.eway_bill_number);
+  }
 
   // Defaults
   if (!result.confidence_score) result.confidence_score = 0.8;
