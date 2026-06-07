@@ -1,13 +1,23 @@
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
+import { Readable } from 'stream';
+import { Storage } from '@google-cloud/storage';
 import { execute } from '../config/db';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
+const BUCKET_NAME = process.env.GCS_BUCKET_NAME || '';
 
-// Ensure upload directory exists
+// Ensure upload directory exists locally (used for temporary staging/local dev)
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+// Initialize GCS client if bucket is configured
+let gcsStorage: Storage | null = null;
+if (BUCKET_NAME) {
+  console.log(`Google Cloud Storage enabled. Target bucket: ${BUCKET_NAME}`);
+  gcsStorage = new Storage();
 }
 
 export interface FileInfo {
@@ -19,30 +29,103 @@ export interface FileInfo {
 }
 
 /**
- * Get the full path for a file
+ * Check if GCS storage is enabled
+ */
+export function isGcsEnabled(): boolean {
+  return !!BUCKET_NAME && gcsStorage !== null;
+}
+
+/**
+ * Get the local full path for a file (for temporary uploads/local storage)
  */
 export function getFilePath(filename: string): string {
   return path.join(UPLOAD_DIR, filename);
 }
 
 /**
- * Delete a file from disk
+ * Upload a local file to GCS
  */
-export function deleteFile(filename: string): void {
-  const filePath = getFilePath(filename);
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
+export async function uploadToGcs(localFilePath: string, gcsFileName: string): Promise<void> {
+  if (!isGcsEnabled() || !gcsStorage) {
+    return;
+  }
+  await gcsStorage.bucket(BUCKET_NAME).upload(localFilePath, {
+    destination: gcsFileName,
+    metadata: {
+      cacheControl: 'public, max-age=31536000',
+    },
+  });
+  console.log(`Uploaded to GCS: ${localFilePath} -> gs://${BUCKET_NAME}/${gcsFileName}`);
+}
+
+/**
+ * Check if file exists (either in GCS or locally)
+ */
+export async function fileExists(filename: string): Promise<boolean> {
+  if (isGcsEnabled() && gcsStorage) {
+    try {
+      const [exists] = await gcsStorage.bucket(BUCKET_NAME).file(filename).exists();
+      return exists;
+    } catch (err) {
+      console.error(`Error checking GCS existence for ${filename}:`, err);
+      return false;
+    }
+  } else {
+    return fs.existsSync(getFilePath(filename));
+  }
+}
+
+/**
+ * Delete a file (from GCS if enabled, otherwise from local disk)
+ */
+export async function deleteFile(filename: string): Promise<void> {
+  if (isGcsEnabled() && gcsStorage) {
+    try {
+      await gcsStorage.bucket(BUCKET_NAME).file(filename).delete();
+      console.log(`Deleted GCS file: gs://${BUCKET_NAME}/${filename}`);
+    } catch (err: any) {
+      console.error(`Error deleting GCS file ${filename}:`, err.message);
+    }
+  } else {
+    const filePath = getFilePath(filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+}
+
+/**
+ * Get a read stream for a file (GCS stream or local fs stream)
+ */
+export function getFileStream(filename: string): Readable {
+  if (isGcsEnabled() && gcsStorage) {
+    return gcsStorage.bucket(BUCKET_NAME).file(filename).createReadStream();
+  } else {
+    return fs.createReadStream(getFilePath(filename));
+  }
+}
+
+/**
+ * Get a pre-signed retrieval URL for the document (GCS signed URL or local HTTP URL)
+ */
+export async function getSignedUrlForFile(filename: string): Promise<string> {
+  if (isGcsEnabled() && gcsStorage) {
+    const [url] = await gcsStorage
+      .bucket(BUCKET_NAME)
+      .file(filename)
+      .getSignedUrl({
+        version: 'v4',
+        action: 'read',
+        expires: Date.now() + 15 * 60 * 1000, // 15 minutes expiry
+      });
+    return url;
+  } else {
+    return `http://localhost:3001/uploads/${filename}`;
   }
 }
 
 /**
  * Determine a logical name for the file based on the extraction metadata
- * Rules:
- * 1. Invoice Number -> {invoice_number}_Invoice.{ext}
- * 2. LR / Consignment Note Number -> {lr_number}_LR.{ext}
- * 3. Delivery Number -> {delivery_number}_Delivery.{ext}
- * 4. Vehicle Number + Document Date -> {vehicle_number}_{document_date}_Doc.{ext}
- * 5. Original file name
  */
 export function determineLogicalName(
   originalName: string,
@@ -74,18 +157,16 @@ export function determineLogicalName(
   } else if (veh && date) {
     baseName = `${veh}_${date}_Doc`;
   } else {
-    // Fall back to original file name without extension
     const nameWithoutExt = path.basename(originalName, ext);
     baseName = cleanStr(nameWithoutExt) || 'document';
   }
 
-  // Ensure ext starts with dot
   const dotExt = ext.startsWith('.') ? ext : `.${ext}`;
   return `${baseName}${dotExt}`;
 }
 
 /**
- * Rename a document file logically on disk and update its DB record
+ * Rename a document file logically (on GCS or local disk) and update DB record
  */
 export async function renameDocumentLogically(
   documentId: string,
@@ -101,27 +182,59 @@ export async function renameDocumentLogically(
   }
 ): Promise<string> {
   const logicalName = determineLogicalName(originalFileName, metadata);
-  const currentPath = getFilePath(currentFileName);
-  const targetPath = getFilePath(logicalName);
 
-  // If the target file already exists and is different, we can append a timestamp or counter to avoid overwriting
   let finalLogicalName = logicalName;
   let attempt = 1;
   const ext = path.extname(logicalName);
   const base = path.basename(logicalName, ext);
 
-  while (fs.existsSync(getFilePath(finalLogicalName)) && finalLogicalName !== currentFileName) {
+  // Check existence to avoid collisions
+  while (await fileExists(finalLogicalName) && finalLogicalName !== currentFileName) {
     finalLogicalName = `${base}_${attempt}${ext}`;
     attempt++;
   }
 
-  const finalTargetPath = getFilePath(finalLogicalName);
+  const dbFilePath = isGcsEnabled() 
+    ? `gs://${BUCKET_NAME}/${finalLogicalName}` 
+    : getFilePath(finalLogicalName);
 
-  if (fs.existsSync(currentPath)) {
-    fs.renameSync(currentPath, finalTargetPath);
-    console.log(`Renamed file: ${currentFileName} -> ${finalLogicalName}`);
+  if (isGcsEnabled() && gcsStorage) {
+    // GCS Renaming flow (copy to target and delete source if source exists)
+    try {
+      const bucket = gcsStorage.bucket(BUCKET_NAME);
+      const sourceFile = bucket.file(currentFileName);
+      
+      const [sourceExists] = await sourceFile.exists();
+      if (sourceExists) {
+        if (currentFileName !== finalLogicalName) {
+          await sourceFile.copy(bucket.file(finalLogicalName));
+          await sourceFile.delete();
+          console.log(`Renamed GCS object: ${currentFileName} -> ${finalLogicalName}`);
+        }
+      } else {
+        // If source file doesn't exist in GCS, check if it exists locally to upload (staging upload)
+        const localPath = getFilePath(currentFileName);
+        if (fs.existsSync(localPath)) {
+          await uploadToGcs(localPath, finalLogicalName);
+          fs.unlinkSync(localPath); // delete local staging copy
+        } else {
+          console.warn(`File not found in GCS or locally: ${currentFileName}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`Error during GCS rename operation for ${currentFileName}:`, err.message);
+    }
   } else {
-    console.warn(`File not found to rename: ${currentPath}`);
+    // Local Renaming flow
+    const currentPath = getFilePath(currentFileName);
+    const targetPath = getFilePath(finalLogicalName);
+
+    if (fs.existsSync(currentPath)) {
+      fs.renameSync(currentPath, targetPath);
+      console.log(`Renamed local file: ${currentFileName} -> ${finalLogicalName}`);
+    } else {
+      console.warn(`Local file not found to rename: ${currentPath}`);
+    }
   }
 
   // Update in database
@@ -129,7 +242,7 @@ export async function renameDocumentLogically(
     `UPDATE documents 
      SET stored_file_name = $1, file_path = $2 
      WHERE document_id = $3`,
-    [finalLogicalName, finalTargetPath, documentId]
+    [finalLogicalName, dbFilePath, documentId]
   );
 
   return finalLogicalName;
@@ -156,13 +269,9 @@ export async function preprocessImageIfNeeded(filePath: string): Promise<boolean
 
     console.log(`Preprocessing image file for auto-crop and enhancement: ${filePath}`);
     
-    // Read original file buffer
     const buffer = fs.readFileSync(filePath);
 
     // Apply auto-cropping & enhancements with sharp:
-    // 1. .trim() auto-crops uniform margins/borders based on background threshold
-    // 2. .normalize() stretches dynamic range to fix uneven lighting/shadows
-    // 3. .sharpen() sharpens text edges for more accurate OCR/AI processing
     const processedBuffer = await sharp(buffer)
       .trim()
       .normalize()
@@ -173,7 +282,6 @@ export async function preprocessImageIfNeeded(filePath: string): Promise<boolean
       })
       .toBuffer();
 
-    // Overwrite original file in-place
     fs.writeFileSync(filePath, processedBuffer);
     console.log(`Successfully auto-cropped and enhanced image: ${filePath}`);
     return true;
@@ -182,4 +290,3 @@ export async function preprocessImageIfNeeded(filePath: string): Promise<boolean
     return false;
   }
 }
-

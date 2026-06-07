@@ -6,6 +6,7 @@ import { initDatabase } from './config/db';
 import apiRouter from './routes/api';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
+import { isGcsEnabled, getSignedUrlForFile } from './services/storage';
 
 // Load environment variables
 dotenv.config();
@@ -22,6 +23,21 @@ app.use(express.json());
 
 // Serve static uploaded files (crucial for React previewing)
 const uploadsPath = path.resolve(process.cwd(), 'uploads');
+
+// Intercept uploads path and redirect to GCS if GCS storage is active
+app.get('/uploads/:filename', async (req, res, next) => {
+  if (isGcsEnabled()) {
+    try {
+      const signedUrl = await getSignedUrlForFile(req.params.filename);
+      return res.redirect(signedUrl);
+    } catch (err) {
+      console.error('Error generating pre-signed URL for static GCS redirect:', err);
+      return res.status(500).send('Error retrieving file from cloud storage.');
+    }
+  }
+  next();
+});
+
 app.use('/uploads', express.static(uploadsPath));
 
 // API routers

@@ -9,6 +9,7 @@
     "dev": "nodemon src/server.ts"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "archiver": "^8.0.0",
     "better-sqlite3": "^11.8.0",
     "cors": "^2.8.5",

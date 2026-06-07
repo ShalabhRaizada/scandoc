@@ -7,7 +7,15 @@ import * as XLSX from 'xlsx';
 import archiver = require('archiver');
 import { query, queryOne, execute, getIsPostgres } from '../config/db';
 import { extractDocumentMetadata, ExtractionResult } from '../services/ai';
-import { getFilePath, renameDocumentLogically, preprocessImageIfNeeded } from '../services/storage';
+import { 
+  getFilePath, 
+  renameDocumentLogically, 
+  preprocessImageIfNeeded,
+  isGcsEnabled,
+  getSignedUrlForFile,
+  getFileStream,
+  fileExists
+} from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
 import { requireRoles, authenticateToken } from '../middleware/auth';
 
@@ -174,9 +182,10 @@ router.post(
  * Helper to process a document extraction asynchronously
  */
 async function processDocumentExtraction(documentId: string, batchId: string, uploadedBy: string) {
+  let doc: any = null;
   try {
     // Get document details
-    const doc = await queryOne(
+    doc = await queryOne(
       'SELECT original_file_name, stored_file_name, file_path FROM documents WHERE document_id = $1',
       [documentId]
     );
@@ -443,6 +452,18 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
 
   } catch (error: any) {
     console.error(`Error extracting metadata for document ${documentId}:`, error);
+
+    // Clean up local temp file on failure
+    try {
+      if (doc && doc.stored_file_name) {
+        const localPath = getFilePath(doc.stored_file_name);
+        if (fs.existsSync(localPath)) {
+          fs.unlinkSync(localPath);
+        }
+      }
+    } catch (cleanupErr) {
+      console.error('Error cleaning up local file after extraction failure:', cleanupErr);
+    }
 
     // Update status to Failed
     await execute(
@@ -1059,13 +1080,21 @@ router.get('/documents/:document_id/download', async (req: Request, res: Respons
       return res.status(404).json({ error: 'Document not found' });
     }
 
+    const user = req.header('X-User') || 'Viewer User';
+    await createAuditLog(document_id, 'Download', null, { file: doc.stored_file_name }, user);
+
+    if (isGcsEnabled()) {
+      if (!(await fileExists(doc.stored_file_name))) {
+        return res.status(404).json({ error: 'Original file not found in cloud storage' });
+      }
+      const signedUrl = await getSignedUrlForFile(doc.stored_file_name);
+      return res.redirect(signedUrl);
+    }
+
     const filePath = getFilePath(doc.stored_file_name);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Original file not found on disk' });
     }
-
-    const user = req.header('X-User') || 'Viewer User';
-    await createAuditLog(document_id, 'Download', null, { file: doc.stored_file_name }, user);
 
     res.download(filePath, doc.stored_file_name || doc.original_file_name);
   } catch (err: any) {
@@ -1117,15 +1146,15 @@ router.post('/documents/batch-download', async (req: Request, res: Response) => 
 
     // Append files
     for (const doc of docs) {
-      const filePath = getFilePath(doc.stored_file_name);
-      if (fs.existsSync(filePath)) {
+      if (await fileExists(doc.stored_file_name)) {
         const nameInZip = doc.stored_file_name || doc.original_file_name;
-        archive.file(filePath, { name: nameInZip });
+        const fileStream = getFileStream(doc.stored_file_name);
+        archive.append(fileStream, { name: nameInZip });
         
         // Log individual download in audit logs
         await createAuditLog(doc.document_id, 'Batch Downloaded', null, { file: doc.stored_file_name }, user);
       } else {
-        console.warn(`File not found during batch download: ${filePath}`);
+        console.warn(`File not found during batch download: ${doc.stored_file_name}`);
       }
     }
 
