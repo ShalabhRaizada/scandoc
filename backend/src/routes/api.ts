@@ -3,9 +3,11 @@ import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
+import * as XLSX from 'xlsx';
+import archiver = require('archiver');
 import { query, queryOne, execute, getIsPostgres } from '../config/db';
 import { extractDocumentMetadata, ExtractionResult } from '../services/ai';
-import { getFilePath, renameDocumentLogically } from '../services/storage';
+import { getFilePath, renameDocumentLogically, preprocessImageIfNeeded } from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
 
 const router = Router();
@@ -199,8 +201,41 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
       ['Processing', documentId]
     );
 
+    // Auto-crop and enhance image documents before performing AI extraction
+    await preprocessImageIfNeeded(doc.file_path);
+
     // Call AI Extraction Service
     const extractedData = await extractDocumentMetadata(doc.file_path, doc.original_file_name);
+
+    // Check if the document type is recognized and key data could be extracted
+    const hasAnyKeyData = !!(
+      extractedData.logistics?.invoice_number ||
+      extractedData.logistics?.gst_invoice_number ||
+      extractedData.logistics?.lr_number ||
+      extractedData.logistics?.delivery_number ||
+      extractedData.logistics?.vehicle_number ||
+      extractedData.primary_reference_number
+    );
+
+    const isRecognized = extractedData.document_type && 
+                         extractedData.document_type !== 'Unknown Document Type' &&
+                         !extractedData.document_type.toLowerCase().includes('unknown');
+
+    if (!isRecognized || !hasAnyKeyData || (extractedData.confidence_score !== undefined && extractedData.confidence_score < 0.25)) {
+      extractedData.extraction_status = 'Failed';
+      if (!extractedData.review_flags) {
+        extractedData.review_flags = [];
+      }
+      if (!isRecognized) {
+        extractedData.review_flags.push('Unrecognized document: Document type could not be identified');
+      }
+      if (!hasAnyKeyData) {
+        extractedData.review_flags.push('Unrecognized document: No key logistics identifiers extracted');
+      }
+      if (extractedData.confidence_score !== undefined && extractedData.confidence_score < 0.25) {
+        extractedData.review_flags.push(`Unrecognized document: Confidence score is extremely low (${extractedData.confidence_score?.toFixed(2) || 0})`);
+      }
+    }
 
     // Write primary extracted fields directly to normal columns (14.1)
     await execute(
@@ -401,6 +436,12 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
       [isSuccess ? 1 : 0, isFailed ? 1 : 0, batchId]
     );
 
+    // Match document with trip record and link them
+    await matchTripForDocument(documentId);
+
+    // Run duplicate check and flag if necessary
+    await runDuplicateCheckingAndFlagging(documentId);
+
   } catch (error: any) {
     console.error(`Error extracting metadata for document ${documentId}:`, error);
 
@@ -457,9 +498,14 @@ router.post(
         [batch_id]
       );
 
-      // Fire off async extractions in background
+      // Fire off async extractions in background with a 4-second delay between requests
       (async () => {
-        for (const doc of docs) {
+        for (let i = 0; i < docs.length; i++) {
+          const doc = docs[i];
+          if (i > 0) {
+            console.log(`Waiting 4 seconds before processing next document in batch to avoid rate limits...`);
+            await new Promise((r) => setTimeout(r, 4000));
+          }
           await processDocumentExtraction(doc.document_id, batch_id, uploadedBy);
         }
 
@@ -557,9 +603,9 @@ router.get('/document-batches/:batch_id/documents', async (req: Request, res: Re
               document_type, document_subtype, primary_reference_number, document_date,
               invoice_number, lr_number, consignment_note_number, vehicle_number,
               seal_detected, signature_detected, handwriting_detected,
-              extraction_status, confidence_score, created_at
+              extraction_status, confidence_score, trip_no, created_at
        FROM documents 
-       WHERE batch_id = $1
+       WHERE batch_id = $1 AND extraction_status != 'Manually Approved'
        ORDER BY created_at ASC`,
       [batch_id]
     );
@@ -660,11 +706,20 @@ router.put(
         flags.push('Vehicle number is missing');
       }
 
-      if (flags.length === 0 && newStatus === 'Needs Review') {
-        newStatus = 'Approved'; // Can elevate to approved once fixed!
-      } else if (flags.length > 0) {
+      if (flags.length === 0) {
+        if (newStatus === 'Needs Review' || newStatus === 'Approved' || newStatus === 'Manually Approved') {
+          newStatus = 'Manually Approved';
+        }
+      } else {
         newStatus = 'Needs Review';
       }
+
+      if (newStatus === 'Approved') {
+        newStatus = 'Manually Approved';
+      }
+
+      // Sync status into the metadata_json before saving/database write
+      metadata_json.extraction_status = newStatus;
 
       // Update relational database columns and metadata_json (14.1 + 14.2)
       await execute(
@@ -769,10 +824,21 @@ router.put(
         }
       );
 
+      // Match edited document with trip record and link/rename
+      await matchTripForDocument(document_id);
+
+      // Run duplicate check and flag if necessary
+      await runDuplicateCheckingAndFlagging(document_id);
+
+      // Detect if transitioning to Manually Approved
+      const wasApproved = oldDoc.extraction_status === 'Manually Approved' || oldDoc.extraction_status === 'Approved';
+      const isApproved = newStatus === 'Manually Approved';
+      const auditAction = (isApproved && !wasApproved) ? 'Manual Approval' : 'Metadata edit';
+
       // Log metadata edit in audit logs
       await createAuditLog(
         document_id,
-        'Metadata edit',
+        auditAction,
         oldDoc.metadata_json,
         metadata_json,
         changedBy
@@ -857,7 +923,7 @@ router.get('/documents/search', async (req: Request, res: Response) => {
       SELECT document_id, document_type, primary_reference_number, 
              invoice_number, lr_number, vehicle_number, document_date, 
              consignor_name, consignee_name, seal_detected, signature_detected, 
-             handwriting_detected, confidence_score, original_file_name, stored_file_name, extraction_status
+             handwriting_detected, confidence_score, original_file_name, stored_file_name, extraction_status, trip_no
       FROM documents
       WHERE 1=1
     `;
@@ -994,6 +1060,73 @@ router.get('/documents/:document_id/download', async (req: Request, res: Respons
 });
 
 /**
+ * 10.7.1 Batch Download Documents as ZIP
+ * POST /api/documents/batch-download
+ */
+router.post('/documents/batch-download', async (req: Request, res: Response) => {
+  const { document_ids } = req.body;
+  if (!document_ids || !Array.isArray(document_ids) || document_ids.length === 0) {
+    return res.status(400).json({ error: 'No document IDs provided' });
+  }
+
+  try {
+    // Fetch all documents
+    const placeholders = document_ids.map((_, i) => `$${i + 1}`).join(', ');
+    const docs = await query(
+      `SELECT document_id, stored_file_name, original_file_name FROM documents WHERE document_id IN (${placeholders})`,
+      document_ids
+    );
+
+    if (docs.length === 0) {
+      return res.status(404).json({ error: 'No matching documents found' });
+    }
+
+    // Create a zip archive
+    const archive = new archiver.ZipArchive({
+      zlib: { level: 9 }
+    });
+
+    // Handle archive error
+    archive.on('error', (err: any) => {
+      throw err;
+    });
+
+    // Set headers to stream ZIP
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename=scandoc_export_${Date.now()}.zip`);
+
+    // Pipe archive data to the response
+    archive.pipe(res);
+
+    const user = req.header('X-User') || 'Viewer User';
+
+    // Append files
+    for (const doc of docs) {
+      const filePath = getFilePath(doc.stored_file_name);
+      if (fs.existsSync(filePath)) {
+        const nameInZip = doc.stored_file_name || doc.original_file_name;
+        archive.file(filePath, { name: nameInZip });
+        
+        // Log individual download in audit logs
+        await createAuditLog(doc.document_id, 'Batch Downloaded', null, { file: doc.stored_file_name }, user);
+      } else {
+        console.warn(`File not found during batch download: ${filePath}`);
+      }
+    }
+
+    // Finalize the archive
+    await archive.finalize();
+
+  } catch (err: any) {
+    console.error('Error in batch download:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
+
+/**
  * 10.8 Download Metadata JSON API
  * GET /api/documents/{document_id}/metadata/download
  */
@@ -1055,4 +1188,406 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
   }
 });
 
+// Configure Multer for Excel Uploads
+const excelStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.resolve(process.cwd(), 'uploads'));
+  },
+  filename: (req, file, cb) => {
+    const uniqueId = uuidv4();
+    const ext = path.extname(file.originalname);
+    cb(null, `trip_${uniqueId}${ext}`);
+  },
+});
+
+const uploadExcel = multer({
+  storage: excelStorage,
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = ['.xlsx', '.xls'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExtensions.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Unsupported file format. Only Excel files (.xlsx, .xls) are allowed.'));
+    }
+  },
+});
+
+// Helper to format dates correctly for DB storage
+const formatExcelDate = (val: any) => {
+  if (!val) return null;
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return val.toISOString().split('T')[0]; // YYYY-MM-DD
+  }
+  return val.toString();
+};
+
+/**
+ * Upload and Parse Trips Excel API
+ * POST /api/trips/upload
+ */
+router.post(
+  '/trips/upload',
+  requireRoles(['Admin', 'Ops User']),
+  uploadExcel.single('file'),
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded.' });
+      }
+
+      const file = req.file;
+      const uploadedBy = req.body.uploaded_by || 'Ops User';
+
+      // Read Excel file with cellDates to parse Date objects
+      const workbook = XLSX.readFile(file.path, { cellDates: true });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      
+      // Parse sheet to JSON array
+      const rawRows: any[] = XLSX.utils.sheet_to_json(sheet);
+
+      if (rawRows.length === 0) {
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return res.status(400).json({ error: 'Excel sheet is empty.' });
+      }
+
+      const uploadId = uuidv4();
+      const recordCount = rawRows.length;
+
+      // Create trip_upload parent record first to satisfy foreign key constraint
+      await execute(
+        `INSERT INTO trip_uploads (upload_id, file_name, record_count, uploaded_by)
+         VALUES ($1, $2, $3, $4)`,
+        [uploadId, file.originalname, recordCount, uploadedBy]
+      );
+
+      // Insert each row
+      for (const row of rawRows) {
+        const getValue = (keys: string[]) => {
+          for (const key of keys) {
+            const foundKey = Object.keys(row).find(k => k.trim().toLowerCase() === key.toLowerCase());
+            if (foundKey !== undefined) {
+              return row[foundKey];
+            }
+          }
+          return null;
+        };
+
+        const tripNo = getValue(['Trip No', 'TripNo', 'Trip_No']);
+        const tripCreationDate = getValue(['Trip Creation Date', 'TripCreationDate', 'Trip_Creation_Date', 'Creation Date']);
+        const tripVehicle = getValue(['Trip Vehicle', 'TripVehicle', 'Vehicle', 'Vehicle No', 'VehicleNumber']);
+        const destination = getValue(['Destination']);
+        const invNo = getValue(['Inv No', 'InvNo', 'Invoice No', 'InvoiceNumber']);
+        const lrNo = getValue(['LR No', 'LRNo', 'LR Number']);
+        const deliveryNo1 = getValue(['Delivery No 1', 'DeliveryNo1', 'Delivery No']);
+        const deliveryNo2 = getValue(['Delivery No 2', 'DeliveryNo2']);
+        const doNumber = getValue(['DO', 'DO No', 'DONumber']);
+        const deliveryDate = getValue(['Delivery Date', 'DeliveryDate']);
+        const invDate = getValue(['Inv Date', 'InvDate', 'Invoice Date']);
+        const invQty = getValue(['Inv Qty', 'InvQty', 'Qty', 'Quantity']);
+
+        const tripId = uuidv4();
+        await execute(
+          `INSERT INTO trips (
+            trip_id, upload_id, trip_no, trip_creation_date, trip_vehicle, destination,
+            inv_no, lr_no, delivery_no_1, delivery_no_2, do_number, delivery_date, inv_date, inv_qty
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [
+            tripId,
+            uploadId,
+            tripNo !== null ? parseInt(tripNo.toString(), 10) : null,
+            formatExcelDate(tripCreationDate),
+            tripVehicle !== null ? tripVehicle.toString().trim() : null,
+            destination !== null ? destination.toString().trim() : null,
+            invNo !== null ? invNo.toString().trim() : null,
+            lrNo !== null ? lrNo.toString().trim() : null,
+            deliveryNo1 !== null ? deliveryNo1.toString().trim() : null,
+            deliveryNo2 !== null ? deliveryNo2.toString().trim() : null,
+            doNumber !== null ? doNumber.toString().trim() : null,
+            formatExcelDate(deliveryDate),
+            formatExcelDate(invDate),
+            invQty !== null ? parseFloat(invQty.toString()) : null,
+          ]
+        );
+      }
+
+      // Clean up uploaded file
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+
+      // Run batch trip-linking for any pending documents now that we have loaded new trips
+      await matchAllPendingTrips();
+
+      res.json({
+        success: true,
+        upload_id: uploadId,
+        record_count: recordCount,
+        file_name: file.originalname,
+      });
+    } catch (err: any) {
+      console.error('Error uploading trips Excel:', err);
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/**
+ * Get Trip Records API
+ * GET /api/trips
+ */
+router.get('/trips', async (req: Request, res: Response) => {
+  const { search } = req.query;
+  try {
+    let sql = 'SELECT * FROM trips';
+    const params = [];
+    if (search && search.toString().trim() !== '') {
+      sql += ` WHERE trip_vehicle LIKE $1 OR destination LIKE $1 OR inv_no LIKE $1 OR lr_no LIKE $1 OR trip_no LIKE $1`;
+      params.push(`%${search}%`);
+    }
+    sql += ' ORDER BY uploaded_at DESC';
+    const trips = await query(sql, params);
+    res.json(trips);
+  } catch (err: any) {
+    console.error('Error fetching trips:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Get Trip Upload Audits API
+ * GET /api/trips/uploads
+ */
+router.get('/trips/uploads', async (req: Request, res: Response) => {
+  try {
+    const uploads = await query(
+      `SELECT * FROM trip_uploads ORDER BY uploaded_at DESC`
+    );
+    res.json(uploads);
+  } catch (err: any) {
+    console.error('Error fetching trip uploads:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Delete Trip Upload Batch API
+ * DELETE /api/trips/uploads/{upload_id}
+ */
+router.delete(
+  '/trips/uploads/:upload_id',
+  requireRoles(['Admin']),
+  async (req: Request, res: Response) => {
+    const { upload_id } = req.params;
+    try {
+      await execute('DELETE FROM trip_uploads WHERE upload_id = $1', [upload_id]);
+      res.json({ success: true, message: 'Upload batch and associated trips deleted successfully.' });
+    } catch (err: any) {
+      console.error('Error deleting upload batch:', err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/**
+ * Match a document to a trip record based on Invoice No, LR No, or DO No
+ */
+export async function matchTripForDocument(documentId: string): Promise<void> {
+  try {
+    const doc = await queryOne(
+      `SELECT document_id, invoice_number, lr_number, delivery_number, primary_reference_number, stored_file_name, original_file_name 
+       FROM documents WHERE document_id = $1`,
+      [documentId]
+    );
+    if (!doc) return;
+
+    let matchedTrip = null;
+
+    // Match by Invoice Number
+    if (doc.invoice_number && doc.invoice_number.trim() !== '') {
+      matchedTrip = await queryOne(
+        `SELECT * FROM trips WHERE inv_no = $1 LIMIT 1`,
+        [doc.invoice_number.trim()]
+      );
+    }
+
+    // Match by LR Number
+    if (!matchedTrip && doc.lr_number && doc.lr_number.trim() !== '') {
+      matchedTrip = await queryOne(
+        `SELECT * FROM trips WHERE lr_no = $1 LIMIT 1`,
+        [doc.lr_number.trim()]
+      );
+    }
+
+    // Match by Delivery Number / DO
+    if (!matchedTrip && doc.delivery_number && doc.delivery_number.trim() !== '') {
+      matchedTrip = await queryOne(
+        `SELECT * FROM trips WHERE do_number = $1 OR delivery_no_1 = $1 OR delivery_no_2 = $1 LIMIT 1`,
+        [doc.delivery_number.trim()]
+      );
+    }
+
+    if (matchedTrip) {
+      const tripNo = matchedTrip.trip_no;
+
+      // Update trips table with primary reference number
+      await execute(
+        `UPDATE trips SET primary_reference_number = $1 WHERE trip_id = $2`,
+        [doc.primary_reference_number, matchedTrip.trip_id]
+      );
+
+      // Update documents table with trip_no
+      await execute(
+        `UPDATE documents SET trip_no = $1 WHERE document_id = $2`,
+        [tripNo, documentId]
+      );
+
+      // Rename physical file on disk with Trip Number
+      if (tripNo) {
+        const ext = path.extname(doc.original_file_name || doc.stored_file_name);
+        const newFileNameBase = `Trip_${tripNo}`;
+        const targetFileName = `${newFileNameBase}${ext}`;
+        
+        const uploadsDir = path.resolve(process.cwd(), 'uploads');
+        const currentPath = path.join(uploadsDir, doc.stored_file_name);
+        
+        let finalLogicalName = targetFileName;
+        let attempt = 1;
+
+        while (
+          fs.existsSync(path.join(uploadsDir, finalLogicalName)) && 
+          finalLogicalName !== doc.stored_file_name
+        ) {
+          finalLogicalName = `${newFileNameBase}_${attempt}${ext}`;
+          attempt++;
+        }
+
+        const finalTargetPath = path.join(uploadsDir, finalLogicalName);
+
+        if (fs.existsSync(currentPath)) {
+          fs.renameSync(currentPath, finalTargetPath);
+          console.log(`Renamed file with Trip Number: ${doc.stored_file_name} -> ${finalLogicalName}`);
+          
+          await execute(
+            `UPDATE documents SET stored_file_name = $1, file_path = $2 WHERE document_id = $3`,
+            [finalLogicalName, finalTargetPath, documentId]
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Error in matchTripForDocument for ${documentId}:`, err);
+  }
+}
+
+/**
+ * Run trip matching on all documents that don't have a trip_no yet
+ */
+export async function matchAllPendingTrips(): Promise<void> {
+  try {
+    const docs = await query('SELECT document_id FROM documents WHERE trip_no IS NULL');
+    console.log(`Running batch trip matching for ${docs.length} pending documents...`);
+    for (const d of docs) {
+      await matchTripForDocument(d.document_id);
+    }
+  } catch (err) {
+    console.error('Error in matchAllPendingTrips:', err);
+  }
+}
+
+/**
+ * Check if the document has duplicate invoice_number, delivery_number (DO), or trip_no
+ * compared to other existing documents in the database.
+ */
+export async function runDuplicateCheckingAndFlagging(documentId: string): Promise<void> {
+  try {
+    const doc = await queryOne(
+      `SELECT document_id, invoice_number, lr_number, delivery_number, trip_no, metadata_json, extraction_status 
+       FROM documents WHERE document_id = $1`,
+      [documentId]
+    );
+    if (!doc) return;
+
+    const invoiceNo = doc.invoice_number;
+    const deliveryNo = doc.delivery_number;
+    const tripNo = doc.trip_no;
+
+    const duplicateFlags: string[] = [];
+
+    if (invoiceNo && invoiceNo.trim() !== '') {
+      const dupInvoice = await queryOne(
+        'SELECT document_id FROM documents WHERE invoice_number = $1 AND document_id != $2 LIMIT 1',
+        [invoiceNo.trim(), documentId]
+      );
+      if (dupInvoice) {
+        duplicateFlags.push(`Duplicate Invoice Number detected: ${invoiceNo.trim()}`);
+      }
+    }
+
+    if (deliveryNo && deliveryNo.trim() !== '') {
+      const dupDO = await queryOne(
+        'SELECT document_id FROM documents WHERE delivery_number = $1 AND document_id != $2 LIMIT 1',
+        [deliveryNo.trim(), documentId]
+      );
+      if (dupDO) {
+        duplicateFlags.push(`Duplicate Delivery Number (DO) detected: ${deliveryNo.trim()}`);
+      }
+    }
+
+    if (tripNo) {
+      const dupTrip = await queryOne(
+        'SELECT document_id FROM documents WHERE trip_no = $1 AND document_id != $2 LIMIT 1',
+        [tripNo, documentId]
+      );
+      if (dupTrip) {
+        duplicateFlags.push(`Duplicate Trip Number detected: ${tripNo}`);
+      }
+    }
+
+    let metadata = typeof doc.metadata_json === 'string' ? JSON.parse(doc.metadata_json) : (doc.metadata_json || {});
+    
+    // Start with existing review_flags, filtering out previous duplicate warnings
+    let existingFlags: string[] = metadata.review_flags || [];
+    existingFlags = existingFlags.filter(flag => 
+      !flag.startsWith('Duplicate Invoice Number detected') &&
+      !flag.startsWith('Duplicate Delivery Number (DO) detected') &&
+      !flag.startsWith('Duplicate Trip Number detected')
+    );
+
+    // Combine remaining flags with new duplicate flags
+    const finalFlags = [...existingFlags, ...duplicateFlags];
+    metadata.review_flags = finalFlags;
+
+    let finalStatus = doc.extraction_status;
+    if (duplicateFlags.length > 0) {
+      if (finalStatus !== 'Failed') {
+        finalStatus = 'Needs Review';
+      }
+    } else {
+      // If duplicates are cleared, and there are no other active review flags, we can transition it out of Needs Review to Approved
+      if (finalFlags.length === 0 && finalStatus === 'Needs Review') {
+        finalStatus = 'Approved';
+      }
+    }
+
+    await execute(
+      'UPDATE documents SET metadata_json = $1, extraction_status = $2 WHERE document_id = $3',
+      [metadata, finalStatus, documentId]
+    );
+
+    console.log(`Duplicate checking complete for ${documentId}. Duplicate flags found:`, duplicateFlags);
+  } catch (err) {
+    console.error(`Error in runDuplicateCheckingAndFlagging for ${documentId}:`, err);
+  }
+}
+
 export default router;
+

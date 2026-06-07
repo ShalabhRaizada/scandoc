@@ -9,15 +9,19 @@
     "dev": "nodemon src/server.ts"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "better-sqlite3": "^11.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1",
     "pg": "^8.11.5",
-    "uuid": "^9.0.1"
+    "sharp": "^0.34.5",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/better-sqlite3": "^7.6.9",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",

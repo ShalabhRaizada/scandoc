@@ -286,6 +286,7 @@ tr:hover td {
   color: #f87171;
 }
 
+.status-manuallyapproved,
 .status-approved {
   background-color: rgba(16, 185, 129, 0.25);
   color: #10b981;

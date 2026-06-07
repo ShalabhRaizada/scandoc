@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
+import { query } from '../config/db';
 
 export interface ExtractionResult {
   document_type: string;
@@ -99,11 +100,32 @@ export async function extractDocumentMetadata(
   let rawData: any = null;
 
   if (geminiApiKey) {
-    try {
-      console.log(`Using Google Gemini API for: ${originalFileName}`);
-      rawData = await callGeminiVision(filePath, geminiApiKey);
-    } catch (e: any) {
-      console.error('Gemini API call failed, falling back to mock:', e.message);
+    const maxRetries = 3;
+    let attempt = 0;
+    let success = false;
+
+    while (attempt < maxRetries && !success) {
+      try {
+        console.log(`Using Google Gemini API for: ${originalFileName} (Attempt ${attempt + 1}/${maxRetries})`);
+        rawData = await callGeminiVision(filePath, geminiApiKey);
+        success = true;
+      } catch (e: any) {
+        attempt++;
+        const errStr = String(e.message || e);
+        const isRateLimit = errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('quota') || errStr.includes('Quota');
+
+        if (isRateLimit && attempt < maxRetries) {
+          const delayMs = attempt * 5000; // 5s, 10s backoff
+          console.warn(`Gemini API rate limited (429). Retrying in ${delayMs / 1000}s...`);
+          await new Promise((r) => setTimeout(r, delayMs));
+        } else {
+          console.error(`Gemini API call failed on attempt ${attempt}:`, e.message);
+          if (attempt >= maxRetries) {
+            console.error('Max retries reached. Falling back to mock.');
+          }
+          break; // Stop retrying for non-rate-limit errors or if max retries exceeded
+        }
+      }
     }
   } else if (openaiApiKey) {
     try {
@@ -117,7 +139,7 @@ export async function extractDocumentMetadata(
   // Fall back to Mock Extractor if real API didn't run or returned invalid data
   if (!rawData) {
     console.log(`Running Mock AI Extractor for: ${originalFileName}`);
-    rawData = getMockExtractionData(originalFileName);
+    rawData = await getMockExtractionData(originalFileName);
   }
 
   // Apply verification and validation logic
@@ -417,8 +439,72 @@ function validateAndPostProcess(raw: any, originalName: string): ExtractionResul
 /**
  * Mock generator returns high fidelity data based on the filename keywords
  */
-function getMockExtractionData(filename: string): any {
+async function getMockExtractionData(filename: string): Promise<any> {
   const fnLower = filename.toLowerCase();
+
+  // Try to find a trip matching the number in the filename (e.g. 5127913.pdf)
+  let matchedTrip = null;
+  const tripMatch = filename.match(/(5\d{6})/);
+  if (tripMatch) {
+    const tripNo = parseInt(tripMatch[1], 10);
+    try {
+      // Fetch all rows for this trip
+      const trips = await query('SELECT * FROM trips WHERE trip_no = $1 ORDER BY inv_no ASC', [tripNo]);
+      if (trips.length > 0) {
+        // If filename contains "-1" or "_1", pick the second trip if available
+        const index = filename.includes('-1') || filename.includes('_1') ? 1 : 0;
+        matchedTrip = trips[index] || trips[0];
+        console.log(`Mock Extractor matched trip number ${tripNo} from filename. Row selected index: ${index}`);
+      }
+    } catch (e) {
+      console.error('Error in mock extractor database lookup:', e);
+    }
+  }
+
+  if (matchedTrip) {
+    return {
+      document_type: 'Lorry Receipt / Proof of Delivery',
+      document_subtype: 'POD with receiving stamp',
+      document_date: matchedTrip.trip_creation_date || '2026-06-04',
+      primary_reference_number: matchedTrip.lr_no || ('REF-' + Math.floor(100000 + Math.random() * 900000)),
+      confidence_score: 0.95,
+      parties: {
+        transporter: { name: 'Green Planet Transportation Private' },
+        consignor: { name: 'Tata Steel Limited' },
+        consignee: { name: matchedTrip.destination || 'Jamshedpur' },
+      },
+      logistics: {
+        consignment_note_number: matchedTrip.lr_no,
+        lr_number: matchedTrip.lr_no,
+        vehicle_number: matchedTrip.trip_vehicle,
+        delivery_number: matchedTrip.delivery_no_1 || matchedTrip.delivery_no_2,
+        invoice_number: matchedTrip.inv_no,
+        gst_invoice_number: matchedTrip.inv_no,
+      },
+      line_items: [
+        {
+          line_number: 1,
+          description: 'STEEL MATERIAL',
+          net_weight_mt: matchedTrip.inv_qty,
+          gross_weight_mt: matchedTrip.inv_qty,
+        }
+      ],
+      visual_tags: {
+        seal_detected: true,
+        seal_text: 'TATA STEEL LTD.',
+        seal_location: 'bottom stamp',
+        seal_confidence: 0.90,
+        signature_detected: true,
+        signature_location: 'receiver sign',
+        signature_confidence: 0.85,
+        handwriting_detected: false,
+        handwritten_fields: [],
+        comments_detected: false,
+        comments: [],
+      },
+      review_flags: [],
+    };
+  }
 
   // If the file name looks like the exact POD example from Section 7
   if (fnLower.includes('pod_3553') || fnLower.includes('r45013000523')) {

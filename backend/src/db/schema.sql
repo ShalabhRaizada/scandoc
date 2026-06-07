@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS documents (
     extraction_status VARCHAR(50),
     confidence_score NUMERIC(5,2),
     metadata_json JSONB,
+    trip_no INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -105,6 +106,40 @@ CREATE INDEX IF NOT EXISTS idx_documents_primary_reference ON documents(primary_
 CREATE INDEX IF NOT EXISTS idx_documents_consignor ON documents(consignor_name);
 CREATE INDEX IF NOT EXISTS idx_documents_consignee ON documents(consignee_name);
 CREATE INDEX IF NOT EXISTS idx_documents_metadata_json ON documents USING GIN(metadata_json);
+
+-- Table: trip_uploads
+CREATE TABLE IF NOT EXISTS trip_uploads (
+    upload_id UUID PRIMARY KEY,
+    file_name VARCHAR(255),
+    record_count INTEGER,
+    uploaded_by VARCHAR(255),
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: trips
+CREATE TABLE IF NOT EXISTS trips (
+    trip_id UUID PRIMARY KEY,
+    upload_id UUID REFERENCES trip_uploads(upload_id) ON DELETE CASCADE,
+    trip_no INTEGER,
+    trip_creation_date VARCHAR(100),
+    trip_vehicle VARCHAR(100),
+    destination VARCHAR(255),
+    inv_no VARCHAR(100),
+    lr_no VARCHAR(100),
+    delivery_no_1 VARCHAR(100),
+    delivery_no_2 VARCHAR(100),
+    do_number VARCHAR(100),
+    delivery_date VARCHAR(100),
+    inv_date VARCHAR(100),
+    inv_qty NUMERIC(12,3),
+    primary_reference_number VARCHAR(100),
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trips_trip_no ON trips(trip_no);
+CREATE INDEX IF NOT EXISTS idx_trips_vehicle ON trips(trip_vehicle);
+CREATE INDEX IF NOT EXISTS idx_trips_upload_id ON trips(upload_id);
+
 
 -- Full-Text Search configuration (PostgreSQL specific, skipped in SQLite fallback)
 -- To be run dynamically in PostgreSQL setup:

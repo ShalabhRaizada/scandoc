@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 import { execute } from '../config/db';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
@@ -133,3 +134,52 @@ export async function renameDocumentLogically(
 
   return finalLogicalName;
 }
+
+/**
+ * Preprocess uploaded image documents by auto-cropping margins (trimming)
+ * and enhancing text contrast/sharpness for optimized OCR extraction.
+ * Overwrites the original file in-place if preprocessed.
+ */
+export async function preprocessImageIfNeeded(filePath: string): Promise<boolean> {
+  const ext = path.extname(filePath).toLowerCase();
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.tiff', '.bmp'];
+  
+  if (!imageExtensions.includes(ext)) {
+    return false; // Skip if not an image (e.g., PDF)
+  }
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      console.warn(`preprocessImageIfNeeded: File not found at ${filePath}`);
+      return false;
+    }
+
+    console.log(`Preprocessing image file for auto-crop and enhancement: ${filePath}`);
+    
+    // Read original file buffer
+    const buffer = fs.readFileSync(filePath);
+
+    // Apply auto-cropping & enhancements with sharp:
+    // 1. .trim() auto-crops uniform margins/borders based on background threshold
+    // 2. .normalize() stretches dynamic range to fix uneven lighting/shadows
+    // 3. .sharpen() sharpens text edges for more accurate OCR/AI processing
+    const processedBuffer = await sharp(buffer)
+      .trim()
+      .normalize()
+      .sharpen({
+        sigma: 1.5,
+        m1: 1.0,
+        m2: 2.0
+      })
+      .toBuffer();
+
+    // Overwrite original file in-place
+    fs.writeFileSync(filePath, processedBuffer);
+    console.log(`Successfully auto-cropped and enhanced image: ${filePath}`);
+    return true;
+  } catch (err) {
+    console.error(`Error during image preprocessing for ${filePath}:`, err);
+    return false;
+  }
+}
+

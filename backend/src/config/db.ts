@@ -47,6 +47,20 @@ export async function initDatabase(): Promise<void> {
 
   // Run SQLite schema creation
   runSqliteSchema();
+
+  // Dynamically add columns to existing tables if database already exists
+  try {
+    sqliteDb.exec("ALTER TABLE documents ADD COLUMN trip_no INTEGER;");
+    console.log("Added trip_no column to documents table.");
+  } catch (e) {
+    // Column already exists
+  }
+  try {
+    sqliteDb.exec("ALTER TABLE trips ADD COLUMN primary_reference_number TEXT;");
+    console.log("Added primary_reference_number column to trips table.");
+  } catch (e) {
+    // Column already exists
+  }
 }
 
 async function runPgSchema() {
@@ -113,6 +127,7 @@ function runSqliteSchema() {
         extraction_status TEXT,
         confidence_score REAL,
         metadata_json TEXT,
+        trip_no INTEGER,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -164,9 +179,39 @@ function runSqliteSchema() {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS trip_uploads (
+        upload_id TEXT PRIMARY KEY,
+        file_name TEXT,
+        record_count INTEGER,
+        uploaded_by TEXT,
+        uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS trips (
+        trip_id TEXT PRIMARY KEY,
+        upload_id TEXT REFERENCES trip_uploads(upload_id) ON DELETE CASCADE,
+        trip_no INTEGER,
+        trip_creation_date TEXT,
+        trip_vehicle TEXT,
+        destination TEXT,
+        inv_no TEXT,
+        lr_no TEXT,
+        delivery_no_1 TEXT,
+        delivery_no_2 TEXT,
+        do_number TEXT,
+        delivery_date TEXT,
+        inv_date TEXT,
+        inv_qty REAL,
+        primary_reference_number TEXT,
+        uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_documents_invoice_number ON documents(invoice_number);
     CREATE INDEX IF NOT EXISTS idx_documents_lr_number ON documents(lr_number);
     CREATE INDEX IF NOT EXISTS idx_documents_vehicle_number ON documents(vehicle_number);
+    CREATE INDEX IF NOT EXISTS idx_trips_trip_no ON trips(trip_no);
+    CREATE INDEX IF NOT EXISTS idx_trips_vehicle ON trips(trip_vehicle);
+    CREATE INDEX IF NOT EXISTS idx_trips_upload_id ON trips(upload_id);
   `);
 }
 

@@ -4,8 +4,9 @@ import ProcessingStatus from './components/ProcessingStatus';
 import DocumentSearch from './components/DocumentSearch';
 import DocumentReview from './components/DocumentReview';
 import SemanticSearch from './components/SemanticSearch';
+import TripDashboard from './components/TripDashboard';
 
-type ActiveTab = 'upload' | 'status' | 'search' | 'semantic';
+type ActiveTab = 'upload' | 'status' | 'search' | 'semantic' | 'trips';
 type UserRole = 'Admin' | 'Ops User' | 'Viewer' | 'Auditor' | 'API User';
 
 export default function App() {
@@ -108,6 +109,13 @@ export default function App() {
             >
               🧠 AI Semantic Search
             </button>
+            <button
+              className={`tab-btn ${activeTab === 'trips' ? 'active' : ''}`}
+              onClick={() => setActiveTab('trips')}
+              style={{ padding: '8px 16px', fontSize: '0.9rem' }}
+            >
+              🚚 Trip Dashboard
+            </button>
           </nav>
         )}
 
@@ -207,6 +215,11 @@ export default function App() {
                   currentRole={currentRole}
                   onViewDocument={handleViewDocument}
                   onEditDocument={handleEditDocument}
+                />
+              )}
+              {activeTab === 'trips' && (
+                <TripDashboard
+                  currentRole={currentRole}
                 />
               )}
             </>

@@ -88,6 +88,14 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
     setTotalResults(0);
   };
 
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [downloading, setDownloading] = useState(false);
+
+  // Reset selected IDs when documents list changes
+  useEffect(() => {
+    setSelectedDocIds([]);
+  }, [documents]);
+
   const handleDownloadFile = (docId: string) => {
     window.open(`http://localhost:3001/api/documents/${docId}/download`, '_blank');
   };
@@ -95,6 +103,41 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
   const handleDownloadJson = (docId: string) => {
     window.open(`http://localhost:3001/api/documents/${docId}/metadata/download`, '_blank');
   };
+
+  const handleBatchDownload = async () => {
+    if (selectedDocIds.length === 0) return;
+    setDownloading(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/documents/batch-download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ document_ids: selectedDocIds }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Batch download failed');
+      }
+
+      // Convert response to blob and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scandoc_export_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to download documents: ' + err.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
 
   const getStatusClass = (statusStr: string) => {
     const s = statusStr.toLowerCase().replace(/\s/g, '');
@@ -221,6 +264,16 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
       {/* Results Title */}
       <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ fontSize: '1.25rem', color: '#fff' }}>Results ({totalResults})</h3>
+        {selectedDocIds.length > 0 && (
+          <button
+            className="btn btn-primary"
+            onClick={handleBatchDownload}
+            disabled={downloading}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '0.875rem' }}
+          >
+            {downloading ? '⚡ Preparing Zip...' : `📥 Download Selected (${selectedDocIds.length})`}
+          </button>
+        )}
       </div>
 
       {/* Results Table */}
@@ -238,10 +291,25 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
           <table>
             <thead>
               <tr>
+                <th style={{ width: '40px', textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={documents.length > 0 && selectedDocIds.length === documents.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedDocIds(documents.map(d => d.document_id));
+                      } else {
+                        setSelectedDocIds([]);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </th>
+                <th>Trip No</th>
+                <th>Primary Ref No</th>
                 <th>Document ID</th>
                 <th>File Name</th>
                 <th>Document Type</th>
-                <th>Primary Ref No</th>
                 <th>Vehicle No</th>
                 <th>Doc Date</th>
                 <th>Consignor</th>
@@ -259,6 +327,25 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
                 
                 return (
                   <tr key={doc.document_id}>
+                    <td style={{ textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedDocIds.includes(doc.document_id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedDocIds(prev => [...prev, doc.document_id]);
+                          } else {
+                            setSelectedDocIds(prev => prev.filter(id => id !== doc.document_id));
+                          }
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
+                    <td style={{ fontWeight: 600, color: 'var(--color-info)' }}>
+                      {doc.trip_no || '-'}
+                    </td>
+                    <td style={{ fontWeight: 600 }}>{doc.primary_reference_number || '-'}</td>
+
                     <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                       {doc.document_id.slice(0, 8)}...
                     </td>
@@ -266,7 +353,6 @@ export default function DocumentSearch({ currentRole, onViewDocument, onEditDocu
                       <span style={{ fontWeight: 500, color: '#fff' }}>{doc.original_file_name}</span>
                     </td>
                     <td>{doc.document_type || '-'}</td>
-                    <td style={{ fontWeight: 600 }}>{doc.primary_reference_number || '-'}</td>
                     <td>{doc.vehicle_number || '-'}</td>
                     <td>{doc.document_date ? new Date(doc.document_date).toLocaleDateString() : '-'}</td>
                     <td style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.consignor_name}>
