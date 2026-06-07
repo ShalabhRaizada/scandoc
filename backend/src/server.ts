@@ -40,10 +40,10 @@ app.get('/uploads/:filename', async (req, res, next) => {
 
 app.use('/uploads', express.static(uploadsPath));
 
-// API routers
-app.use('/api', apiRouter);
+// API routers (order is critical to prevent global auth interception on login/me routes)
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
+app.use('/api', apiRouter);
 
 // Start server
 async function start() {
