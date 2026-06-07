@@ -6,7 +6,7 @@ import { initDatabase } from './config/db';
 import apiRouter from './routes/api';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
-import { isGcsEnabled, getSignedUrlForFile } from './services/storage';
+import { isGcsEnabled, getFileStream, fileExists } from './services/storage';
 
 // Load environment variables
 dotenv.config();
@@ -24,14 +24,28 @@ app.use(express.json());
 // Serve static uploaded files (crucial for React previewing)
 const uploadsPath = path.resolve(process.cwd(), 'uploads');
 
-// Intercept uploads path and redirect to GCS if GCS storage is active
+// Intercept uploads path and stream from GCS if GCS storage is active
 app.get('/uploads/:filename', async (req, res, next) => {
   if (isGcsEnabled()) {
     try {
-      const signedUrl = await getSignedUrlForFile(req.params.filename);
-      return res.redirect(signedUrl);
+      const filename = req.params.filename;
+      const exists = await fileExists(filename);
+      if (!exists) {
+        return res.status(404).send('File not found in cloud storage.');
+      }
+
+      res.type(filename);
+      const stream = getFileStream(filename);
+      stream.on('error', (err) => {
+        console.error(`Error streaming file ${filename} from GCS:`, err);
+        if (!res.headersSent) {
+          res.status(500).send('Error streaming file.');
+        }
+      });
+      stream.pipe(res);
+      return;
     } catch (err) {
-      console.error('Error generating pre-signed URL for static GCS redirect:', err);
+      console.error('Error serving file from GCS:', err);
       return res.status(500).send('Error retrieving file from cloud storage.');
     }
   }

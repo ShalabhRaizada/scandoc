@@ -1087,8 +1087,20 @@ router.get('/documents/:document_id/download', async (req: Request, res: Respons
       if (!(await fileExists(doc.stored_file_name))) {
         return res.status(404).json({ error: 'Original file not found in cloud storage' });
       }
-      const signedUrl = await getSignedUrlForFile(doc.stored_file_name);
-      return res.redirect(signedUrl);
+      res.type(doc.stored_file_name);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${doc.stored_file_name || doc.original_file_name}"`
+      );
+      const stream = getFileStream(doc.stored_file_name);
+      stream.on('error', (err) => {
+        console.error(`Error streaming download for ${doc.stored_file_name} from GCS:`, err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Error downloading file.' });
+        }
+      });
+      stream.pipe(res);
+      return;
     }
 
     const filePath = getFilePath(doc.stored_file_name);
