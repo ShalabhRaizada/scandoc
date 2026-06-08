@@ -173,7 +173,11 @@ export function determineLogicalName(
   }
 ): string {
   const ext = path.extname(originalName);
-  const cleanStr = (s: string | null | undefined) => s ? s.trim().replace(/[^a-zA-Z0-9_-]/g, '') : '';
+  const cleanStr = (s: any) => {
+    if (s === null || s === undefined) return '';
+    const str = typeof s === 'string' ? s : String(s);
+    return str.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  };
 
   const inv = cleanStr(metadata.invoice_number);
   const lr = cleanStr(metadata.lr_number || metadata.consignment_note_number);
