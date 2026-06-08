@@ -415,9 +415,6 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
       }
     }
 
-    // Generate/upsert document embedding for semantic search
-    await upsertDocumentEmbedding(documentId, extractedData);
-
     // Rename stored file logically based on extracted metadata (Rule 13)
     const finalStoredName = await renameDocumentLogically(
       documentId,
@@ -432,6 +429,9 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
         document_date: extractedData.document_date
       }
     );
+
+    // Generate/upsert document embedding for semantic search (with renamed logical filename & metadata attributes)
+    await upsertDocumentEmbedding(documentId, finalStoredName, extractedData);
 
     // Update search vector if PostgreSQL (PostgreSQL GIN)
     if (getIsPostgres()) {
@@ -857,11 +857,8 @@ router.put(
         }
       }
 
-      // Update document embedding
-      await upsertDocumentEmbedding(document_id, metadata_json);
-
       // Rename file if primary references changed (Logical naming)
-      await renameDocumentLogically(
+      const finalStoredName = await renameDocumentLogically(
         document_id,
         oldDoc.original_file_name,
         oldDoc.stored_file_name,
@@ -874,6 +871,9 @@ router.put(
           document_date: metadata_json.document_date
         }
       );
+
+      // Update document embedding (with renamed logical filename & metadata attributes)
+      await upsertDocumentEmbedding(document_id, finalStoredName, metadata_json);
 
       // Match edited document with trip record and link/rename
       await matchTripForDocument(document_id);

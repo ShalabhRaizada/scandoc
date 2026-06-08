@@ -147,7 +147,11 @@ export function buildDocumentTextRepresentation(doc: any): string {
 /**
  * Upsert document vector embedding in the database
  */
-export async function upsertDocumentEmbedding(documentId: string, metadataJson: any): Promise<void> {
+export async function upsertDocumentEmbedding(
+  documentId: string,
+  storedFileName: string,
+  metadataJson: any
+): Promise<void> {
   try {
     const textContent = buildDocumentTextRepresentation(metadataJson);
     console.log(`Generating embedding for document ${documentId}. Text length: ${textContent.length}`);
@@ -157,9 +161,9 @@ export async function upsertDocumentEmbedding(documentId: string, metadataJson: 
     // Dialect agnostic upsert: Delete if exists, then insert
     await execute('DELETE FROM document_embeddings WHERE document_id = $1', [documentId]);
     await execute(
-      `INSERT INTO document_embeddings (document_id, embedding, text_content, updated_at)
-       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
-      [documentId, JSON.stringify(vector), textContent]
+      `INSERT INTO document_embeddings (document_id, stored_file_name, metadata_json, embedding, text_content, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`,
+      [documentId, storedFileName, metadataJson, JSON.stringify(vector), textContent]
     );
 
     console.log(`Upserted vector embedding for document ${documentId}`);

@@ -75,6 +75,12 @@ export async function initDatabase(): Promise<void> {
   try {
     sqliteDb.exec("ALTER TABLE documents ADD COLUMN token_cost REAL;");
   } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE document_embeddings ADD COLUMN stored_file_name TEXT;");
+  } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE document_embeddings ADD COLUMN metadata_json TEXT;");
+  } catch (e) {}
 
   await seedDefaultUsers();
 }
@@ -96,6 +102,16 @@ async function runPgSchema() {
     `);
   } catch (err) {
     console.error('Error adding token tracking columns to PostgreSQL:', err);
+  }
+
+  try {
+    await pgPool.query(`
+      ALTER TABLE document_embeddings 
+      ADD COLUMN IF NOT EXISTS stored_file_name TEXT,
+      ADD COLUMN IF NOT EXISTS metadata_json JSONB;
+    `);
+  } catch (err) {
+    console.error('Error adding metadata columns to PostgreSQL document_embeddings:', err);
   }
 
   // Check if search_vector column and trigger are already set up
@@ -207,6 +223,8 @@ function runSqliteSchema() {
 
     CREATE TABLE IF NOT EXISTS document_embeddings (
         document_id TEXT PRIMARY KEY REFERENCES documents(document_id) ON DELETE CASCADE,
+        stored_file_name TEXT,
+        metadata_json TEXT,
         embedding TEXT,
         text_content TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP

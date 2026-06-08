@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS document_audit_logs (
 -- Table: document_embeddings
 CREATE TABLE IF NOT EXISTS document_embeddings (
     document_id UUID PRIMARY KEY REFERENCES documents(document_id) ON DELETE CASCADE,
+    stored_file_name VARCHAR(500),
+    metadata_json JSONB,
     embedding TEXT,
     text_content TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
