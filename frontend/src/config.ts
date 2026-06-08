@@ -14,6 +14,11 @@ export const getApiBaseUrl = (): string => {
   if (origin.includes('scandoc-frontend')) {
     return origin.replace('scandoc-frontend', 'scandoc-backend');
   }
+
+  if (origin.includes('xtract.ai')) {
+    // If frontend is accessed on app.xtract.ai or xtract.ai, route API queries to api.xtract.ai
+    return 'https://api.xtract.ai';
+  }
   
   // Return empty string for relative routing if mapped behind a unified load balancer domain
   return '';
