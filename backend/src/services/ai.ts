@@ -251,9 +251,31 @@ Return only valid JSON. Do not return explanations. Use the following keys:
     },
   });
 
+  const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+  let lastError: any = null;
+
+  for (const model of modelsToTry) {
+    try {
+      console.log(`Attempting Gemini call with model: ${model}`);
+      const resultObj = await performGeminiRequest(model, requestBody, apiKey);
+      console.log(`Gemini call succeeded with model: ${model}`);
+      return resultObj;
+    } catch (err: any) {
+      console.warn(`Gemini call failed with model ${model}: ${err.message || err}`);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('All Gemini models failed');
+}
+
+/**
+ * Perform individual HTTP request to Gemini API
+ */
+function performGeminiRequest(model: string, requestBody: string, apiKey: string): Promise<any> {
   return new Promise((resolve, reject) => {
     const req = https.request(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
@@ -266,6 +288,11 @@ Return only valid JSON. Do not return explanations. Use the following keys:
         res.on('end', () => {
           try {
             const parsed = JSON.parse(body);
+            if (res.statusCode !== 200) {
+              const errMsg = parsed.error?.message || `HTTP ${res.statusCode}`;
+              return reject(new Error(`Gemini API Error: ${errMsg}`));
+            }
+
             const textResponse = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
             if (textResponse) {
               const resultObj = JSON.parse(textResponse);

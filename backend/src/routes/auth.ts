@@ -189,47 +189,60 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   if (geminiApiKey) {
     diagnostics.gemini.configured = true;
+    diagnostics.gemini.tested_models = {};
     try {
       const https = require('https');
-      const testPromise = new Promise<void>((resolve, reject) => {
-        const testPromptBody = JSON.stringify({
-          contents: [{ parts: [{ text: "Respond with exactly the word: HELLO" }] }]
-        });
-        const apiReq = https.request(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${geminiApiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 5000
-          },
-          (apiRes: any) => {
-            let body = '';
-            apiRes.on('data', (chunk: any) => (body += chunk));
-            apiRes.on('end', () => {
-              try {
-                const parsed = JSON.parse(body);
-                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (text && text.trim().toUpperCase().includes('HELLO')) {
-                  diagnostics.gemini.test_call_success = true;
-                  resolve();
-                } else {
-                  reject(new Error(`Unexpected response structure or status: ${body}`));
+      const modelsToTest = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+      
+      for (const model of modelsToTest) {
+        const testPromise = new Promise<boolean>((resolve) => {
+          const testPromptBody = JSON.stringify({
+            contents: [{ parts: [{ text: "Respond with exactly the word: HELLO" }] }]
+          });
+          const apiReq = https.request(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 5000
+            },
+            (apiRes: any) => {
+              let body = '';
+              apiRes.on('data', (chunk: any) => (body += chunk));
+              apiRes.on('end', () => {
+                try {
+                  const parsed = JSON.parse(body);
+                  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                  if (text && text.trim().toUpperCase().includes('HELLO')) {
+                    resolve(true);
+                  } else {
+                    resolve(false);
+                  }
+                } catch (e) {
+                  resolve(false);
                 }
-              } catch (e) {
-                reject(new Error(`Failed to parse body: ${body}. Error: ${e}`));
-              }
-            });
-          }
-        );
-        apiReq.on('error', (err: any) => reject(err));
-        apiReq.on('timeout', () => {
-          apiReq.destroy();
-          reject(new Error('Request timed out after 5000ms'));
+              });
+            }
+          );
+          apiReq.on('error', () => resolve(false));
+          apiReq.on('timeout', () => {
+            apiReq.destroy();
+            resolve(false);
+          });
+          apiReq.write(testPromptBody);
+          apiReq.end();
         });
-        apiReq.write(testPromptBody);
-        apiReq.end();
-      });
-      await testPromise;
+        
+        const success = await testPromise;
+        diagnostics.gemini.tested_models[model] = success ? 'SUCCESS' : 'FAILED';
+        if (success) {
+          diagnostics.gemini.test_call_success = true;
+        }
+      }
+      
+      if (!diagnostics.gemini.test_call_success) {
+        diagnostics.gemini.error = 'All tested models failed. Check billing, quota, or network access.';
+      }
     } catch (err: any) {
       diagnostics.gemini.error = err.message || String(err);
     }
