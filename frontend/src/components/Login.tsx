@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { getApiBaseUrl } from '../config';
-import logoImg from '../assets/logo.png';
 
 interface LoginProps {
   onLoginSuccess: (sessionId: string, user: { user_id: string; username: string; role: string }) => void;
@@ -104,18 +103,19 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div
+          <h1
             style={{
-              background: '#fff',
-              padding: '12px 24px',
-              borderRadius: '12px',
-              display: 'inline-block',
-              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.2)',
-              marginBottom: '16px',
+              fontSize: '2.75rem',
+              fontWeight: 800,
+              margin: '0 0 12px 0',
+              letterSpacing: '-0.03em',
+              background: 'linear-gradient(135deg, #4ade80, #10b981)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
             }}
           >
-            <img src={logoImg} alt="xTrAct Logo" style={{ height: '36px', display: 'block' }} />
-          </div>
+            xTrAct
+          </h1>
           <p style={{ fontSize: '0.875rem', color: 'rgba(255, 255, 255, 0.5)', margin: 0 }}>
             Logistics Document Processing Portal
           </p>
