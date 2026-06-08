@@ -120,4 +120,122 @@ router.get('/me', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/auth/diagnostics
+ * Safe public diagnostic check
+ */
+router.get('/diagnostics', async (req: Request, res: Response) => {
+  const diagnostics: any = {
+    timestamp: new Date().toISOString(),
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      DB_HOST: process.env.DB_HOST ? `SET (length: ${process.env.DB_HOST.length})` : 'NOT_SET',
+      DB_DATABASE: process.env.DB_DATABASE ? 'SET' : 'NOT_SET',
+      DB_USER: process.env.DB_USER ? 'SET' : 'NOT_SET',
+      GCS_BUCKET_NAME: process.env.GCS_BUCKET_NAME || 'NOT_SET',
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `SET (starts with ${process.env.GEMINI_API_KEY.substring(0, 5)}... length: ${process.env.GEMINI_API_KEY.length})` : 'NOT_SET',
+    },
+    database: {
+      type: 'unknown',
+      connected: false,
+      error: null as string | null
+    },
+    gcs: {
+      enabled: false,
+      bucket: process.env.GCS_BUCKET_NAME || '',
+      connected: false,
+      error: null as string | null
+    },
+    gemini: {
+      configured: false,
+      test_call_success: false,
+      error: null as string | null
+    }
+  };
+
+  // 1. Test database connection
+  try {
+    const { getIsPostgres, queryOne } = require('../config/db');
+    diagnostics.database.type = getIsPostgres() ? 'PostgreSQL' : 'SQLite';
+    const dbTest = await queryOne('SELECT 1 + 1 as result');
+    if (dbTest && (dbTest.result === 2 || dbTest.result === '2')) {
+      diagnostics.database.connected = true;
+    } else {
+      diagnostics.database.error = 'Returned incorrect value: ' + JSON.stringify(dbTest);
+    }
+  } catch (err: any) {
+    diagnostics.database.error = err.message || String(err);
+  }
+
+  // 2. Test GCS Connection
+  try {
+    const { isGcsEnabled } = require('../services/storage');
+    diagnostics.gcs.enabled = isGcsEnabled();
+    if (isGcsEnabled()) {
+      const { Storage } = require('@google-cloud/storage');
+      const storage = new Storage();
+      const bucketName = process.env.GCS_BUCKET_NAME || '';
+      const [exists] = await storage.bucket(bucketName).exists();
+      diagnostics.gcs.connected = exists;
+      if (!exists) {
+        diagnostics.gcs.error = `Bucket ${bucketName} does not exist.`;
+      }
+    }
+  } catch (err: any) {
+    diagnostics.gcs.error = err.message || String(err);
+  }
+
+  // 3. Test Gemini Connection
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  if (geminiApiKey) {
+    diagnostics.gemini.configured = true;
+    try {
+      const https = require('https');
+      const testPromise = new Promise<void>((resolve, reject) => {
+        const testPromptBody = JSON.stringify({
+          contents: [{ parts: [{ text: "Respond with exactly the word: HELLO" }] }]
+        });
+        const apiReq = https.request(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${geminiApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 5000
+          },
+          (apiRes: any) => {
+            let body = '';
+            apiRes.on('data', (chunk: any) => (body += chunk));
+            apiRes.on('end', () => {
+              try {
+                const parsed = JSON.parse(body);
+                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text && text.trim().toUpperCase().includes('HELLO')) {
+                  diagnostics.gemini.test_call_success = true;
+                  resolve();
+                } else {
+                  reject(new Error(`Unexpected response structure or status: ${body}`));
+                }
+              } catch (e) {
+                reject(new Error(`Failed to parse body: ${body}. Error: ${e}`));
+              }
+            });
+          }
+        );
+        apiReq.on('error', (err: any) => reject(err));
+        apiReq.on('timeout', () => {
+          apiReq.destroy();
+          reject(new Error('Request timed out after 5000ms'));
+        });
+        apiReq.write(testPromptBody);
+        apiReq.end();
+      });
+      await testPromise;
+    } catch (err: any) {
+      diagnostics.gemini.error = err.message || String(err);
+    }
+  }
+
+  res.json(diagnostics);
+});
+
 export default router;

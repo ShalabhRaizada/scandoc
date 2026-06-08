@@ -236,21 +236,31 @@ export async function renameDocumentLogically(
     // GCS Renaming flow (copy to target and delete source if source exists)
     try {
       const bucket = gcsStorage.bucket(BUCKET_NAME);
-      const sourceFile = bucket.file(currentFileName);
+      const localPath = getFilePath(currentFileName);
       
-      const [sourceExists] = await sourceFile.exists();
-      if (sourceExists) {
+      if (fs.existsSync(localPath)) {
+        // If local file exists (e.g. downloaded for preprocessing), upload it directly to finalLogicalName
+        await uploadToGcs(localPath, finalLogicalName);
+        fs.unlinkSync(localPath); // delete local staging copy
+        
+        // If filename changed, delete the old file from GCS
         if (currentFileName !== finalLogicalName) {
-          await sourceFile.copy(bucket.file(finalLogicalName));
-          await sourceFile.delete();
-          console.log(`Renamed GCS object: ${currentFileName} -> ${finalLogicalName}`);
+          const sourceFile = bucket.file(currentFileName);
+          const [sourceExists] = await sourceFile.exists();
+          if (sourceExists) {
+            await sourceFile.delete();
+          }
         }
       } else {
-        // If source file doesn't exist in GCS, check if it exists locally to upload (staging upload)
-        const localPath = getFilePath(currentFileName);
-        if (fs.existsSync(localPath)) {
-          await uploadToGcs(localPath, finalLogicalName);
-          fs.unlinkSync(localPath); // delete local staging copy
+        // Fallback: Rename directly in GCS if no local file exists
+        const sourceFile = bucket.file(currentFileName);
+        const [sourceExists] = await sourceFile.exists();
+        if (sourceExists) {
+          if (currentFileName !== finalLogicalName) {
+            await sourceFile.copy(bucket.file(finalLogicalName));
+            await sourceFile.delete();
+            console.log(`Renamed GCS object: ${currentFileName} -> ${finalLogicalName}`);
+          }
         } else {
           console.warn(`File not found in GCS or locally: ${currentFileName}`);
         }

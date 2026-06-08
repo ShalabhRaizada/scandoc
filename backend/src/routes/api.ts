@@ -15,7 +15,8 @@ import {
   getSignedUrlForFile,
   getFileStream,
   fileExists,
-  renameFile
+  renameFile,
+  uploadToGcs
 } from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
 import { requireRoles, authenticateToken } from '../middleware/auth';
@@ -134,6 +135,17 @@ router.post(
         // Create document records in Uploaded state
         for (const file of files) {
           const documentId = uuidv4();
+          let finalFilePath = file.path;
+
+          // If GCS is enabled, upload immediately and remove local staging copy
+          if (isGcsEnabled()) {
+            const bucketName = process.env.GCS_BUCKET_NAME || '';
+            await uploadToGcs(file.path, file.filename);
+            finalFilePath = `gs://${bucketName}/${file.filename}`;
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+            }
+          }
           
           await execute(
             `INSERT INTO documents (
@@ -145,7 +157,7 @@ router.post(
               batchId,
               file.originalname,
               file.filename, // temp name initially
-              file.path,
+              finalFilePath,
               path.extname(file.originalname).substring(1),
               file.size,
               'Uploaded',
@@ -202,11 +214,27 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
       ['Processing', documentId]
     );
 
+    // Ensure the file is downloaded locally before preprocessing/extraction
+    let localFilePath = doc.file_path;
+    if (isGcsEnabled()) {
+      localFilePath = getFilePath(doc.stored_file_name);
+      if (!fs.existsSync(localFilePath)) {
+        console.log(`Downloading ${doc.stored_file_name} from GCS to local path for extraction: ${localFilePath}`);
+        const stream = getFileStream(doc.stored_file_name);
+        const writeStream = fs.createWriteStream(localFilePath);
+        await new Promise<void>((resolve, reject) => {
+          stream.pipe(writeStream)
+            .on('finish', resolve)
+            .on('error', reject);
+        });
+      }
+    }
+
     // Auto-crop and enhance image documents before performing AI extraction
-    await preprocessImageIfNeeded(doc.file_path);
+    await preprocessImageIfNeeded(localFilePath);
 
     // Call AI Extraction Service
-    const extractedData = await extractDocumentMetadata(doc.file_path, doc.original_file_name);
+    const extractedData = await extractDocumentMetadata(localFilePath, doc.original_file_name);
 
     // Check if the document type is recognized and key data could be extracted
     const hasAnyKeyData = !!(
