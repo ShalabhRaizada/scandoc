@@ -253,6 +253,15 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
     }
   }
 
+  // 4. Fetch last 10 audit logs
+  try {
+    const { query } = require('../config/db');
+    const logs = await query('SELECT * FROM document_audit_logs ORDER BY changed_at DESC LIMIT 10');
+    diagnostics.recent_audit_logs = logs;
+  } catch (err: any) {
+    diagnostics.recent_audit_logs_error = err.message || String(err);
+  }
+
   res.json(diagnostics);
 });
 
