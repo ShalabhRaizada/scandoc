@@ -547,15 +547,15 @@ router.post(
         [batch_id]
       );
 
-      // Fire off async extractions in background with a 4-second delay between requests
+      // Fire off async extractions in parallel (up to 10 in a batch) to capture all concurrently
       (async () => {
-        for (let i = 0; i < docs.length; i++) {
-          const doc = docs[i];
-          if (i > 0) {
-            console.log(`Waiting 4 seconds before processing next document in batch to avoid rate limits...`);
-            await new Promise((r) => setTimeout(r, 4000));
-          }
-          await processDocumentExtraction(doc.document_id, batch_id, uploadedBy);
+        try {
+          const extractionPromises = docs.map(doc => 
+            processDocumentExtraction(doc.document_id, batch_id, uploadedBy)
+          );
+          await Promise.all(extractionPromises);
+        } catch (parallelErr) {
+          console.error(`Error in parallel batch extraction:`, parallelErr);
         }
 
         // Check if all processed and update batch final status
