@@ -195,7 +195,7 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
       const modelsToTest = ['gemini-3.5-flash', 'gemini-2.5-flash'];
       
       for (const model of modelsToTest) {
-        const testPromise = new Promise<boolean>((resolve) => {
+        const testPromise = new Promise<{ success: boolean; error?: string; status_code?: number }>((resolve) => {
           const testPromptBody = JSON.stringify({
             contents: [{ parts: [{ text: "Respond with exactly the word: HELLO" }] }]
           });
@@ -212,30 +212,35 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
               apiRes.on('end', () => {
                 try {
                   const parsed = JSON.parse(body);
-                  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                  if (text && text.trim().toUpperCase().includes('HELLO')) {
-                    resolve(true);
+                  if (apiRes.statusCode === 200) {
+                    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (text && text.trim().toUpperCase().includes('HELLO')) {
+                      resolve({ success: true });
+                    } else {
+                      resolve({ success: false, error: `Unexpected body structure: ${body.substring(0, 200)}`, status_code: apiRes.statusCode });
+                    }
                   } else {
-                    resolve(false);
+                    const errMsg = parsed.error?.message || JSON.stringify(parsed);
+                    resolve({ success: false, error: errMsg, status_code: apiRes.statusCode });
                   }
-                } catch (e) {
-                  resolve(false);
+                } catch (e: any) {
+                  resolve({ success: false, error: `Parse error: ${e.message}. Body: ${body.substring(0, 200)}`, status_code: apiRes.statusCode });
                 }
               });
             }
           );
-          apiReq.on('error', () => resolve(false));
+          apiReq.on('error', (err: any) => resolve({ success: false, error: err.message, status_code: 0 }));
           apiReq.on('timeout', () => {
             apiReq.destroy();
-            resolve(false);
+            resolve({ success: false, error: 'Request timed out after 5000ms', status_code: 0 });
           });
           apiReq.write(testPromptBody);
           apiReq.end();
         });
         
-        const success = await testPromise;
-        diagnostics.gemini.tested_models[model] = success ? 'SUCCESS' : 'FAILED';
-        if (success) {
+        const result = await testPromise;
+        diagnostics.gemini.tested_models[model] = result;
+        if (result.success) {
           diagnostics.gemini.test_call_success = true;
         }
       }
