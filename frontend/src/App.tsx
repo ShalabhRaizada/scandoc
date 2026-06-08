@@ -10,6 +10,8 @@ import CostReport from './components/CostReport';
 import AdminConsole from './components/AdminConsole';
 import { getApiBaseUrl } from './config';
 
+import logoImg from './assets/logo.png';
+
 type ActiveTab = 'upload' | 'status' | 'search' | 'semantic' | 'trips' | 'reports' | 'admin';
 type UserRole = 'Admin' | 'Ops User' | 'Viewer' | 'Auditor' | 'API User';
 
@@ -182,9 +184,16 @@ export default function App() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: 'var(--color-primary)' }}>⚡</span> SCANDOC
-          </span>
+          <div style={{ 
+            background: 'white', 
+            padding: '6px 12px', 
+            borderRadius: '6px', 
+            display: 'inline-flex', 
+            alignItems: 'center',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+          }}>
+            <img src={logoImg} alt="xTrAct Logo" style={{ height: '18px', display: 'block' }} />
+          </div>
           <span style={{ fontSize: '0.75rem', padding: '3px 8px', background: 'rgba(255,255,255,0.06)', borderRadius: '4px', color: 'var(--text-secondary)' }}>
             Logistics OCR Engine
           </span>

@@ -1,5 +1,6 @@
-import { getApiBaseUrl } from '../config';
 import React, { useState } from 'react';
+import { getApiBaseUrl } from '../config';
+import logoImg from '../assets/logo.png';
 
 interface LoginProps {
   onLoginSuccess: (sessionId: string, user: { user_id: string; username: string; role: string }) => void;
@@ -105,23 +106,16 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '64px',
-              height: '64px',
-              background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+              background: '#fff',
+              padding: '12px 24px',
               borderRadius: '12px',
-              boxShadow: '0 8px 16px rgba(99, 102, 241, 0.3)',
+              display: 'inline-block',
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.2)',
               marginBottom: '16px',
-              fontSize: '2rem',
             }}
           >
-            ⚡
+            <img src={logoImg} alt="xTrAct Logo" style={{ height: '36px', display: 'block' }} />
           </div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.025em' }}>
-            SCANDOC
-          </h1>
           <p style={{ fontSize: '0.875rem', color: 'rgba(255, 255, 255, 0.5)', margin: 0 }}>
             Logistics Document Processing Portal
           </p>
