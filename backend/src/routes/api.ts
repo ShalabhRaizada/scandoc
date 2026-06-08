@@ -14,7 +14,8 @@ import {
   isGcsEnabled,
   getSignedUrlForFile,
   getFileStream,
-  fileExists
+  fileExists,
+  renameFile
 } from '../services/storage';
 import { upsertDocumentEmbedding, semanticSearch } from '../services/vector';
 import { requireRoles, authenticateToken } from '../middleware/auth';
@@ -1506,36 +1507,35 @@ export async function matchTripForDocument(documentId: string): Promise<void> {
         [tripNo, documentId]
       );
 
-      // Rename physical file on disk with Trip Number
+      // Rename file with Trip Number (supports GCS and local disk)
       if (tripNo) {
         const ext = path.extname(doc.original_file_name || doc.stored_file_name);
         const newFileNameBase = `Trip_${tripNo}`;
         const targetFileName = `${newFileNameBase}${ext}`;
         
-        const uploadsDir = path.resolve(process.cwd(), 'uploads');
-        const currentPath = path.join(uploadsDir, doc.stored_file_name);
-        
         let finalLogicalName = targetFileName;
         let attempt = 1;
 
         while (
-          fs.existsSync(path.join(uploadsDir, finalLogicalName)) && 
+          (await fileExists(finalLogicalName)) && 
           finalLogicalName !== doc.stored_file_name
         ) {
           finalLogicalName = `${newFileNameBase}_${attempt}${ext}`;
           attempt++;
         }
 
-        const finalTargetPath = path.join(uploadsDir, finalLogicalName);
+        const dbFilePath = isGcsEnabled()
+          ? `gs://${process.env.GCS_BUCKET_NAME || ''}/${finalLogicalName}`
+          : getFilePath(finalLogicalName);
 
-        if (fs.existsSync(currentPath)) {
-          fs.renameSync(currentPath, finalTargetPath);
-          console.log(`Renamed file with Trip Number: ${doc.stored_file_name} -> ${finalLogicalName}`);
-          
+        try {
+          await renameFile(doc.stored_file_name, finalLogicalName);
           await execute(
             `UPDATE documents SET stored_file_name = $1, file_path = $2 WHERE document_id = $3`,
-            [finalLogicalName, finalTargetPath, documentId]
+            [finalLogicalName, dbFilePath, documentId]
           );
+        } catch (err: any) {
+          console.error(`Error renaming matched trip file for ${documentId}:`, err.message);
         }
       }
     }

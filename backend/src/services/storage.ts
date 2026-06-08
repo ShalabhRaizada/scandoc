@@ -95,6 +95,40 @@ export async function deleteFile(filename: string): Promise<void> {
 }
 
 /**
+ * Rename a file (from GCS if enabled, otherwise from local disk)
+ */
+export async function renameFile(currentFileName: string, targetFileName: string): Promise<void> {
+  if (currentFileName === targetFileName) return;
+
+  if (isGcsEnabled() && gcsStorage) {
+    try {
+      const bucket = gcsStorage.bucket(BUCKET_NAME);
+      const sourceFile = bucket.file(currentFileName);
+      const [sourceExists] = await sourceFile.exists();
+      if (sourceExists) {
+        await sourceFile.copy(bucket.file(targetFileName));
+        await sourceFile.delete();
+        console.log(`Renamed GCS object: ${currentFileName} -> ${targetFileName}`);
+      } else {
+        console.warn(`Source GCS file not found to rename: ${currentFileName}`);
+      }
+    } catch (err: any) {
+      console.error(`Error during GCS rename operation for ${currentFileName} to ${targetFileName}:`, err.message);
+      throw err;
+    }
+  } else {
+    const currentPath = getFilePath(currentFileName);
+    const targetPath = getFilePath(targetFileName);
+    if (fs.existsSync(currentPath)) {
+      fs.renameSync(currentPath, targetPath);
+      console.log(`Renamed local file: ${currentFileName} -> ${targetFileName}`);
+    } else {
+      console.warn(`Local file not found to rename: ${currentPath}`);
+    }
+  }
+}
+
+/**
  * Get a read stream for a file (GCS stream or local fs stream)
  */
 export function getFileStream(filename: string): Readable {

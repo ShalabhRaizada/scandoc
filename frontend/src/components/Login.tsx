@@ -236,30 +236,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             )}
           </button>
         </form>
-
-        {/* Demo Credentials Panel */}
-        <div
-          style={{
-            marginTop: '32px',
-            padding: '16px',
-            background: 'rgba(255,255,255,0.01)',
-            border: '1px solid rgba(255,255,255,0.03)',
-            borderRadius: '8px',
-          }}
-        >
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Demo User Profiles
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)' }}>
-            <div>Admin: <strong style={{ color: '#fff' }}>admin</strong></div>
-            <div>Ops: <strong style={{ color: '#fff' }}>ops</strong></div>
-            <div>Viewer: <strong style={{ color: '#fff' }}>viewer</strong></div>
-            <div>Auditor: <strong style={{ color: '#fff' }}>auditor</strong></div>
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.35)', marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '8px' }}>
-            Password for all profiles: <strong style={{ color: '#fff' }}>password123</strong>
-          </div>
-        </div>
       </div>
     </div>
   );
