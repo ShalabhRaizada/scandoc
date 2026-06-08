@@ -19,6 +19,11 @@ export const getApiBaseUrl = (): string => {
     // If frontend is accessed on app.xtract.ai or xtract.ai, route API queries to api.xtract.ai
     return 'https://api.xtract.ai';
   }
+
+  if (origin.includes('xtract.in')) {
+    // If frontend is accessed on pod.xtract.in or xtract.in, route API queries to api.xtract.in
+    return 'https://api.xtract.in';
+  }
   
   // Return empty string for relative routing if mapped behind a unified load balancer domain
   return '';
