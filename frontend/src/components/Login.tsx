@@ -117,7 +117,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             xTrAct
           </h1>
           <p style={{ fontSize: '0.875rem', color: 'rgba(255, 255, 255, 0.5)', margin: 0 }}>
-            Logistics Document Processing Portal
+            eXtraordinary Truckers in Action
           </p>
         </div>
 
