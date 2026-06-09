@@ -304,7 +304,7 @@ export default function TripDashboard({ currentRole, onViewDocument }: TripDashb
                 </tr>
               </thead>
               <tbody>
-                {uploads.length === 0 ? (
+                {!Array.isArray(uploads) || uploads.length === 0 ? (
                   <tr>
                     <td colSpan={canDelete ? 5 : 4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
                       No upload history found in the database.
@@ -321,7 +321,7 @@ export default function TripDashboard({ currentRole, onViewDocument }: TripDashb
                       </td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{up.uploaded_by}</td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        {new Date(up.uploaded_at).toLocaleString()}
+                        {up.uploaded_at ? new Date(up.uploaded_at).toLocaleString() : '-'}
                       </td>
                       {canDelete && (
                         <td style={{ textAlign: 'center' }}>
@@ -411,7 +411,7 @@ export default function TripDashboard({ currentRole, onViewDocument }: TripDashb
               </tr>
             </thead>
             <tbody>
-              {trips.length === 0 ? (
+              {!Array.isArray(trips) || trips.length === 0 ? (
                 <tr>
                   <td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '36px' }}>
                     No trip records match the criteria or database is empty.
@@ -479,10 +479,12 @@ export default function TripDashboard({ currentRole, onViewDocument }: TripDashb
                           )}
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                          {trip.inv_qty !== null ? trip.inv_qty.toLocaleString(undefined, { minimumFractionDigits: 3 }) : '-'}
+                          {(trip.inv_qty !== null && trip.inv_qty !== undefined && typeof trip.inv_qty === 'number') 
+                            ? trip.inv_qty.toLocaleString(undefined, { minimumFractionDigits: 3 }) 
+                            : '-'}
                         </td>
                         <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                          {new Date(trip.uploaded_at).toLocaleString()}
+                          {trip.uploaded_at ? new Date(trip.uploaded_at).toLocaleString() : '-'}
                         </td>
                       </tr>
 
