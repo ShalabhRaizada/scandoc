@@ -22,7 +22,7 @@ app.use(cors({
 app.use(express.json());
 
 // Serve static uploaded files (crucial for React previewing)
-const uploadsPath = path.resolve(process.cwd(), 'uploads');
+const uploadsPath = path.resolve(__dirname, '../uploads');
 
 // Intercept uploads path and stream from GCS if GCS storage is active
 app.get('/uploads/:filename', async (req, res, next) => {

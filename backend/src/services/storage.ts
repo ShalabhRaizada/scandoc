@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 import { Storage } from '@google-cloud/storage';
 import { execute } from '../config/db';
 
-const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
+const UPLOAD_DIR = path.resolve(__dirname, '../../uploads');
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME || '';
 
 // Ensure upload directory exists locally (used for temporary staging/local dev)

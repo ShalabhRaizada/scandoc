@@ -14,7 +14,7 @@ router.use(requireRoles(['Admin']));
  */
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const users = await query('SELECT user_id, username, role, created_at FROM users ORDER BY username ASC');
+    const users = await query('SELECT user_id, username, role, last_login, created_at FROM users ORDER BY username ASC');
     res.json(users);
   } catch (err: any) {
     console.error('Error fetching users:', err);
@@ -100,6 +100,21 @@ router.put('/:user_id', async (req: AuthenticatedRequest, res: Response) => {
       }
 
       await execute('UPDATE users SET role = $1 WHERE user_id = $2', [role, user_id]);
+
+      // Add audit trail log for role change
+      const auditId = uuidv4();
+      await execute(
+        `INSERT INTO document_audit_logs (audit_id, document_id, action, old_value, new_value, changed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          auditId,
+          null,
+          'User Role Update',
+          JSON.stringify({ username: user.username, old_role: user.role }),
+          JSON.stringify({ new_role: role }),
+          req.user?.username || 'Admin'
+        ]
+      );
     }
 
     if (password) {

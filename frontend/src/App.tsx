@@ -53,6 +53,84 @@ export default function App() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [showReview, setShowReview] = useState(false);
 
+  // Sync state from window location path
+  const syncStateFromUrl = () => {
+    const path = window.location.pathname;
+    if (path.startsWith('/review/')) {
+      const docId = path.substring(8);
+      if (docId) {
+        setSelectedDocId(docId);
+        setShowReview(true);
+        return;
+      }
+    }
+    
+    setShowReview(false);
+    setSelectedDocId(null);
+
+    const tab = path.substring(1) as ActiveTab;
+    const validTabs: ActiveTab[] = ['upload', 'status', 'search', 'semantic', 'trips', 'reports', 'admin'];
+    if (validTabs.includes(tab)) {
+      setActiveTab(tab);
+    } else {
+      // If path is root or invalid, redirect to role default
+      if (currentUser) {
+        const defaultTab = (currentUser.role === 'Viewer' || currentUser.role === 'Auditor') ? 'search' : 'upload';
+        setActiveTab(defaultTab);
+        window.history.replaceState(null, '', `/${defaultTab}`);
+      }
+    }
+  };
+
+  const navigateTo = (path: string, replace = false) => {
+    if (replace) {
+      window.history.replaceState(null, '', path);
+    } else {
+      window.history.pushState(null, '', path);
+    }
+    syncStateFromUrl();
+  };
+
+  // Listen for browser back/forward buttons
+  useEffect(() => {
+    if (currentUser) {
+      syncStateFromUrl();
+      window.addEventListener('popstate', syncStateFromUrl);
+    }
+    return () => {
+      window.removeEventListener('popstate', syncStateFromUrl);
+    };
+  }, [currentUser]);
+
+  // Session activity tracker (15 minutes idle timeout)
+  useEffect(() => {
+    if (!sessionToken || !currentUser) return;
+
+    let idleTimeout: any;
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => {
+        alert('Your session has expired due to 15 minutes of inactivity. You will be logged out.');
+        handleLogout();
+      }, 15 * 60 * 1000);
+    };
+
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    activityEvents.forEach(event => {
+      window.addEventListener(event, resetIdleTimer);
+    });
+
+    resetIdleTimer();
+
+    return () => {
+      clearTimeout(idleTimeout);
+      activityEvents.forEach(event => {
+        window.removeEventListener(event, resetIdleTimer);
+      });
+    };
+  }, [sessionToken, currentUser]);
+
   // Verify session on app load
   useEffect(() => {
     const verifySession = async () => {
@@ -69,14 +147,7 @@ export default function App() {
         const data = await res.json();
         if (res.ok && data.user) {
           setCurrentUser(data.user);
-          // Set default landing tab based on role permissions
-          if (data.user.role === 'Viewer' || data.user.role === 'Auditor') {
-            setActiveTab('search');
-          } else {
-            setActiveTab('upload');
-          }
         } else {
-          // Invalid session, clear state
           localStorage.removeItem('scandoc_session');
           setSessionToken(null);
           setCurrentUser(null);
@@ -94,11 +165,6 @@ export default function App() {
     localStorage.setItem('scandoc_session', token);
     setSessionToken(token);
     setCurrentUser({ username: user.username, role: user.role as UserRole });
-    if (user.role === 'Viewer' || user.role === 'Auditor') {
-      setActiveTab('search');
-    } else {
-      setActiveTab('upload');
-    }
   };
 
   const handleLogout = async () => {
@@ -115,21 +181,20 @@ export default function App() {
     localStorage.removeItem('scandoc_session');
     setSessionToken(null);
     setCurrentUser(null);
+    window.history.pushState(null, '', '/');
   };
 
   const handleUploadSuccess = (batchId: string) => {
     setActiveBatchId(batchId);
-    setActiveTab('status'); // Switch to status tab automatically
+    navigateTo('/status');
   };
 
   const handleViewDocument = (docId: string) => {
-    setSelectedDocId(docId);
-    setShowReview(true);
+    navigateTo(`/review/${docId}`);
   };
 
   const handleEditDocument = (docId: string) => {
-    setSelectedDocId(docId);
-    setShowReview(true);
+    navigateTo(`/review/${docId}`);
   };
 
   const getRolePermissions = (role: UserRole) => {
@@ -203,14 +268,14 @@ export default function App() {
               <>
                 <button
                   className={`tab-btn ${activeTab === 'upload' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('upload')}
+                  onClick={() => navigateTo('/upload')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
                   📥 Bulk Upload
                 </button>
                 <button
                   className={`tab-btn ${activeTab === 'status' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('status')}
+                  onClick={() => navigateTo('/status')}
                   style={{ padding: '8px 16px', fontSize: '0.9rem' }}
                 >
                   📊 Processing Status
@@ -219,14 +284,14 @@ export default function App() {
             )}
             <button
               className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`}
-              onClick={() => setActiveTab('search')}
+              onClick={() => navigateTo('/search')}
               style={{ padding: '8px 16px', fontSize: '0.9rem' }}
             >
               🔍 Document Search
             </button>
             <button
               className={`tab-btn ${activeTab === 'semantic' ? 'active' : ''}`}
-              onClick={() => setActiveTab('semantic')}
+              onClick={() => navigateTo('/semantic')}
               style={{ padding: '8px 16px', fontSize: '0.9rem' }}
             >
               🧠 AI Semantic Search
@@ -234,7 +299,7 @@ export default function App() {
             {(currentUser.role === 'Admin' || currentUser.role === 'Ops User') && (
               <button
                 className={`tab-btn ${activeTab === 'trips' ? 'active' : ''}`}
-                onClick={() => setActiveTab('trips')}
+                onClick={() => navigateTo('/trips')}
                 style={{ padding: '8px 16px', fontSize: '0.9rem' }}
               >
                 🚚 Trip Dashboard
@@ -242,7 +307,7 @@ export default function App() {
             )}
             <button
               className={`tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
-              onClick={() => setActiveTab('reports')}
+              onClick={() => navigateTo('/reports')}
               style={{ padding: '8px 16px', fontSize: '0.9rem' }}
             >
               📈 Cost Report
@@ -250,10 +315,10 @@ export default function App() {
             {currentUser.role === 'Admin' && (
               <button
                 className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
-                onClick={() => setActiveTab('admin')}
+                onClick={() => navigateTo('/admin')}
                 style={{ padding: '8px 16px', fontSize: '0.9rem' }}
               >
-                ⚙️ Admin Console
+                🔑 Admin Console
               </button>
             )}
           </nav>
@@ -327,8 +392,7 @@ export default function App() {
               documentId={selectedDocId}
               currentRole={currentUser.role}
               onClose={() => {
-                setShowReview(false);
-                setSelectedDocId(null);
+                navigateTo('/' + activeTab);
               }}
             />
           ) : (
@@ -365,6 +429,7 @@ export default function App() {
               {activeTab === 'trips' && (
                 <TripDashboard
                   currentRole={currentUser.role}
+                  onViewDocument={handleViewDocument}
                 />
               )}
               {activeTab === 'reports' && (

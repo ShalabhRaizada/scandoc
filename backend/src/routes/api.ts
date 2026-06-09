@@ -29,7 +29,7 @@ router.use(authenticateToken);
 // Configure Multer for File Uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.resolve(process.cwd(), 'uploads'));
+    cb(null, path.resolve(__dirname, '../../uploads'));
   },
   filename: (req, file, cb) => {
     // Keep a unique temporary filename
@@ -125,9 +125,9 @@ router.post(
       try {
         // Create Batch Record
         await execute(
-          `INSERT INTO document_batches (batch_id, batch_name, uploaded_by, total_documents, status)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [batchId, batchName, uploadedBy, files.length, 'Uploaded']
+          `INSERT INTO document_batches (batch_id, batch_name, customer_name, uploaded_by, total_documents, status)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [batchId, batchName, customerName, uploadedBy, files.length, 'Uploaded']
         );
 
         const responseDocs = [];
@@ -497,9 +497,9 @@ async function processDocumentExtraction(documentId: string, batchId: string, up
     // Update status to Failed
     await execute(
       `UPDATE documents 
-       SET extraction_status = 'Failed', confidence_score = 0.0
-       WHERE document_id = $1`,
-      [documentId]
+       SET extraction_status = 'Failed', confidence_score = 0.0, metadata_json = $1
+       WHERE document_id = $2`,
+      [JSON.stringify({ error: error.message }), documentId]
     );
 
     // Update batch stats
@@ -588,13 +588,41 @@ router.post(
 );
 
 /**
+ * GET /api/customers
+ * Returns a unique list of customer names (from consignors, consignees in documents + predefined defaults)
+ */
+router.get('/customers', async (req: Request, res: Response) => {
+  try {
+    const consignors = await query("SELECT DISTINCT consignor_name FROM documents WHERE consignor_name IS NOT NULL AND consignor_name <> ''");
+    const consignees = await query("SELECT DISTINCT consignee_name FROM documents WHERE consignee_name IS NOT NULL AND consignee_name <> ''");
+    
+    const defaults = [
+      'Tata Steel Limited',
+      'ANM ISPAT PRIVATE LIMITED',
+      'JSW Steel Limited',
+      'Essar Steel Limited',
+      'Green Planet Transportation Private'
+    ];
+    
+    const dynamicNames = new Set(defaults);
+    consignors.forEach((c: any) => dynamicNames.add(c.consignor_name));
+    consignees.forEach((c: any) => dynamicNames.add(c.consignee_name));
+    
+    res.json(Array.from(dynamicNames).sort());
+  } catch (err: any) {
+    console.error('Error fetching customers:', err);
+    res.status(500).json({ error: 'Failed to retrieve customer names.' });
+  }
+});
+
+/**
  * Get All Batches API
  * GET /api/document-batches
  */
 router.get('/document-batches', async (req: Request, res: Response) => {
   try {
     const batches = await query(
-      `SELECT batch_id, batch_name, uploaded_by, uploaded_at, total_documents, status 
+      `SELECT batch_id, batch_name, customer_name, uploaded_by, uploaded_at, total_documents, status 
        FROM document_batches 
        ORDER BY uploaded_at DESC`
     );
@@ -652,9 +680,9 @@ router.get('/document-batches/:batch_id/documents', async (req: Request, res: Re
               document_type, document_subtype, primary_reference_number, document_date,
               invoice_number, lr_number, consignment_note_number, vehicle_number,
               seal_detected, signature_detected, handwriting_detected,
-              extraction_status, confidence_score, trip_no, created_at
+              extraction_status, confidence_score, trip_no, metadata_json, created_at
        FROM documents 
-       WHERE batch_id = $1 AND extraction_status NOT IN ('Manually Approved', 'Approved')
+       WHERE batch_id = $1
        ORDER BY created_at ASC`,
       [batch_id]
     );
@@ -1080,10 +1108,25 @@ router.get('/documents/search', async (req: Request, res: Response) => {
 
     sql += ' ORDER BY created_at DESC';
 
-    const results = await query(sql, params);
+    const page = parseInt(req.query.page as string || '1', 10);
+    const limit = parseInt(req.query.limit as string || '50', 10);
+    const offset = (page - 1) * limit;
+
+    // Count query
+    const countSql = `SELECT COUNT(*) as count FROM (${sql}) as temp`;
+    const countRes = await queryOne(countSql, params);
+    const totalResults = countRes ? parseInt(countRes.count, 10) : 0;
+
+    // Paginated query
+    const paginatedSql = `${sql} LIMIT $${pCount} OFFSET $${pCount + 1}`;
+    const paginatedParams = [...params, limit, offset];
+    const results = await query(paginatedSql, paginatedParams);
 
     res.json({
-      total_results: results.length,
+      total_results: totalResults,
+      page,
+      limit,
+      total_pages: Math.ceil(totalResults / limit),
       documents: results,
     });
   } catch (err: any) {
@@ -1143,6 +1186,41 @@ router.get('/documents/:document_id/download', async (req: Request, res: Respons
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * POST /api/documents/batch-approve
+ * Approves a list of documents at once
+ */
+router.post(
+  '/documents/batch-approve',
+  requireRoles(['Admin', 'Ops User']),
+  async (req: Request, res: Response) => {
+    const { document_ids } = req.body;
+    if (!document_ids || !Array.isArray(document_ids) || document_ids.length === 0) {
+      return res.status(400).json({ error: 'No document IDs provided' });
+    }
+
+    try {
+      const placeholders = document_ids.map((_, i) => `$${i + 1}`).join(', ');
+      await execute(
+        `UPDATE documents 
+         SET extraction_status = 'Manually Approved' 
+         WHERE document_id IN (${placeholders})`,
+        document_ids
+      );
+
+      const user = req.header('X-User') || 'Admin User';
+      for (const docId of document_ids) {
+        await createAuditLog(docId, 'Manually Approved', null, { note: 'Approved via bulk action' }, user);
+      }
+
+      res.json({ success: true, message: `Successfully approved ${document_ids.length} documents.` });
+    } catch (err: any) {
+      console.error('Error in batch approve:', err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 /**
  * 10.7.1 Batch Download Documents as ZIP
@@ -1276,7 +1354,7 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
 // Configure Multer for Excel Uploads
 const excelStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.resolve(process.cwd(), 'uploads'));
+    cb(null, path.resolve(__dirname, '../../uploads'));
   },
   filename: (req, file, cb) => {
     const uniqueId = uuidv4();
@@ -1430,17 +1508,61 @@ router.post(
  * GET /api/trips
  */
 router.get('/trips', async (req: Request, res: Response) => {
-  const { search } = req.query;
+  const { search, page, limit, sortField, sortOrder } = req.query;
   try {
-    let sql = 'SELECT * FROM trips';
-    const params = [];
-    if (search && search.toString().trim() !== '') {
-      sql += ` WHERE trip_vehicle LIKE $1 OR destination LIKE $1 OR inv_no LIKE $1 OR lr_no LIKE $1 OR trip_no LIKE $1`;
-      params.push(`%${search}%`);
+    const pageNum = parseInt(page as string || '1', 10);
+    const limitNum = parseInt(limit as string || '50', 10);
+    const offsetNum = (pageNum - 1) * limitNum;
+
+    // Allowed sort fields for security
+    const allowedSortFields = [
+      'trip_no', 'trip_creation_date', 'trip_vehicle', 'destination', 
+      'inv_no', 'lr_no', 'delivery_no_1', 'delivery_no_2', 'do_number', 
+      'delivery_date', 'inv_date', 'inv_qty', 'primary_reference_number', 'uploaded_at'
+    ];
+    let activeSortField = 'uploaded_at';
+    if (sortField && allowedSortFields.includes(sortField.toString())) {
+      activeSortField = sortField.toString();
     }
-    sql += ' ORDER BY uploaded_at DESC';
-    const trips = await query(sql, params);
-    res.json(trips);
+
+    let activeSortOrder = 'DESC';
+    if (sortOrder && (sortOrder.toString().toUpperCase() === 'ASC' || sortOrder.toString().toUpperCase() === 'DESC')) {
+      activeSortOrder = sortOrder.toString().toUpperCase();
+    }
+
+    let baseSql = `
+      SELECT *, 
+        (SELECT document_id FROM documents WHERE documents.trip_no = trips.trip_no LIMIT 1) as document_id 
+      FROM trips
+    `;
+    const params: any[] = [];
+    let pCount = 1;
+
+    if (search && search.toString().trim() !== '') {
+      const isPg = getIsPostgres();
+      const likeOp = isPg ? 'ILIKE' : 'LIKE';
+      baseSql += ` WHERE trip_vehicle ${likeOp} $${pCount} OR destination ${likeOp} $${pCount} OR inv_no ${likeOp} $${pCount} OR lr_no ${likeOp} $${pCount} OR CAST(trip_no AS VARCHAR) LIKE $${pCount}`;
+      params.push(`%${search}%`);
+      pCount++;
+    }
+
+    // Get count
+    const countSql = `SELECT COUNT(*) as count FROM (${baseSql}) as temp`;
+    const countRes = await queryOne(countSql, params);
+    const totalResults = countRes ? parseInt(countRes.count, 10) : 0;
+
+    // Get paginated results
+    let selectSql = `${baseSql} ORDER BY ${activeSortField} ${activeSortOrder} LIMIT $${pCount} OFFSET $${pCount + 1}`;
+    const paginatedParams = [...params, limitNum, offsetNum];
+    const trips = await query(selectSql, paginatedParams);
+
+    res.json({
+      total_results: totalResults,
+      page: pageNum,
+      limit: limitNum,
+      total_pages: Math.ceil(totalResults / limitNum),
+      trips
+    });
   } catch (err: any) {
     console.error('Error fetching trips:', err);
     res.status(500).json({ error: err.message });
@@ -1469,7 +1591,7 @@ router.get('/trips/uploads', async (req: Request, res: Response) => {
  */
 router.delete(
   '/trips/uploads/:upload_id',
-  requireRoles(['Admin']),
+  requireRoles(['Admin', 'Ops User']),
   async (req: Request, res: Response) => {
     const { upload_id } = req.params;
     try {
@@ -1707,6 +1829,80 @@ router.get('/reports/token-usage', requireRoles(['Admin', 'Ops User', 'Viewer', 
   } catch (err: any) {
     console.error('Reports error:', err);
     res.status(500).json({ error: 'Failed to retrieve token usage statistics.' });
+  }
+});
+
+/**
+ * GET /api/reports/cost-trends
+ * Fetches token cost trends grouped by date for the last 7 days
+ */
+router.get('/reports/cost-trends', requireRoles(['Admin', 'Ops User', 'Viewer', 'Auditor']), async (req: Request, res: Response) => {
+  try {
+    const isPg = getIsPostgres();
+    let sql = '';
+    if (isPg) {
+      sql = `
+        SELECT 
+          TO_CHAR(created_at, 'YYYY-MM-DD') as date_str,
+          SUM(COALESCE(token_cost, 0.0)) as total_cost,
+          COUNT(document_id) as document_count
+        FROM documents
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY TO_CHAR(created_at, 'YYYY-MM-DD')
+        ORDER BY date_str ASC
+      `;
+    } else {
+      sql = `
+        SELECT 
+          SUBSTR(created_at, 1, 10) as date_str,
+          SUM(COALESCE(token_cost, 0.0)) as total_cost,
+          COUNT(document_id) as document_count
+        FROM documents
+        WHERE created_at >= datetime('now', '-7 days')
+        GROUP BY SUBSTR(created_at, 1, 10)
+        ORDER BY date_str ASC
+      `;
+    }
+    const trends = await query(sql);
+    
+    const formattedTrends = trends.map(t => ({
+      date: t.date_str,
+      cost: Number(t.total_cost || 0.0),
+      count: Number(t.document_count || 0)
+    }));
+
+    res.json(formattedTrends);
+  } catch (err: any) {
+    console.error('Error fetching cost trends:', err);
+    res.status(500).json({ error: 'Failed to retrieve cost trends.' });
+  }
+});
+
+/**
+ * GET /api/reports/by-doc-type
+ * Fetches token cost and counts grouped by document type
+ */
+router.get('/reports/by-doc-type', requireRoles(['Admin', 'Ops User', 'Viewer', 'Auditor']), async (req: Request, res: Response) => {
+  try {
+    const sql = `
+      SELECT 
+        COALESCE(document_type, 'Unknown') as document_type,
+        SUM(COALESCE(token_cost, 0.0)) as total_cost,
+        COUNT(document_id) as document_count
+      FROM documents
+      GROUP BY COALESCE(document_type, 'Unknown')
+      ORDER BY total_cost DESC
+    `;
+    const results = await query(sql);
+    const formatted = results.map(r => ({
+      document_type: r.document_type,
+      cost: Number(r.total_cost || 0.0),
+      count: Number(r.document_count || 0)
+    }));
+    res.json(formatted);
+  } catch (err: any) {
+    console.error('Error fetching costs by doc type:', err);
+    res.status(500).json({ error: 'Failed to retrieve cost by document type.' });
   }
 });
 

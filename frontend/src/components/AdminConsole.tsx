@@ -22,6 +22,7 @@ export default function AdminConsole() {
 
   // Edit State
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editingUsername, setEditingUsername] = useState('');
   const [editPassword, setEditPassword] = useState('');
   const [editRole, setEditRole] = useState('');
   const [updating, setUpdating] = useState(false);
@@ -131,6 +132,7 @@ export default function AdminConsole() {
 
       setSuccess('User updated successfully.');
       setEditingUserId(null);
+      setEditingUsername('');
       setEditPassword('');
       setEditRole('');
       fetchUsers();
@@ -171,12 +173,14 @@ export default function AdminConsole() {
 
   const startEdit = (user: User) => {
     setEditingUserId(user.user_id);
+    setEditingUsername(user.username);
     setEditRole(user.role);
     setEditPassword('');
   };
 
   const cancelEdit = () => {
     setEditingUserId(null);
+    setEditingUsername('');
     setEditRole('');
     setEditPassword('');
   };
@@ -277,8 +281,21 @@ export default function AdminConsole() {
             /* Update User Form */
             <form onSubmit={handleUpdateUser}>
               <h3 style={{ margin: '0 0 16px 0', fontSize: '1.25rem', color: '#fff' }}>Update User Settings</h3>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Editing account: <strong style={{ color: 'var(--color-info)' }}>{editingUsername}</strong>
+              </p>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '6px' }}>Username</label>
+                  <input
+                    type="text"
+                    value={editingUsername}
+                    disabled
+                    style={{ width: '100%', padding: '10px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', borderRadius: '6px', cursor: 'not-allowed' }}
+                  />
+                </div>
+
                 <div>
                   <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '6px' }}>Role</label>
                   <select

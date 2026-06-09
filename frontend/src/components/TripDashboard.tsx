@@ -25,13 +25,15 @@ interface Trip {
   inv_date: string | null;
   inv_qty: number | null;
   uploaded_at: string;
+  document_id?: string | null;
 }
 
 interface TripDashboardProps {
   currentRole: string;
+  onViewDocument: (docId: string) => void;
 }
 
-export default function TripDashboard({ currentRole }: TripDashboardProps) {
+export default function TripDashboard({ currentRole, onViewDocument }: TripDashboardProps) {
   const [uploads, setUploads] = useState<TripUpload[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -44,15 +46,25 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [totalResults, setTotalResults] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // Sorting states
+  const [sortField, setSortField] = useState('uploaded_at');
+  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC');
 
   const allowedExtensions = ['.xlsx', '.xls'];
   const maxFileSize = 15 * 1024 * 1024; // 15MB
 
-  // Fetch all trips and uploads on mount
+  // Fetch uploads on mount or upload success
   useEffect(() => {
     fetchUploads();
+  }, []);
+
+  // Fetch trips when search, page, limit, or sort changes
+  useEffect(() => {
     fetchTrips();
-  }, [searchQuery]);
+  }, [searchQuery, currentPage, pageSize, sortField, sortOrder]);
 
   const fetchUploads = async () => {
     try {
@@ -68,14 +80,21 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
 
   const fetchTrips = async () => {
     try {
-      const url = searchQuery.trim() 
-        ? `${getApiBaseUrl()}/api/trips?search=${encodeURIComponent(searchQuery)}`
-        : `${getApiBaseUrl()}/api/trips`;
-      const res = await fetch(url);
+      const params = new URLSearchParams();
+      if (searchQuery.trim()) {
+        params.append('search', searchQuery);
+      }
+      params.append('page', currentPage.toString());
+      params.append('limit', pageSize.toString());
+      params.append('sortField', sortField);
+      params.append('sortOrder', sortOrder);
+
+      const res = await fetch(`${getApiBaseUrl()}/api/trips?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        setTrips(data);
-        setCurrentPage(1); // Reset page to 1 on search
+        setTrips(data.trips || []);
+        setTotalResults(data.total_results || 0);
+        setTotalPages(data.total_pages || 1);
       }
     } catch (err) {
       console.error('Failed to fetch trip logs:', err);
@@ -138,6 +157,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
       
       // Refresh data
       fetchUploads();
+      setCurrentPage(1);
       fetchTrips();
     } catch (err: any) {
       setUploadError(err.message || 'An unexpected error occurred during upload.');
@@ -163,6 +183,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
       if (res.ok) {
         setUploadSuccess(`Upload batch "${fileName}" deleted successfully.`);
         fetchUploads();
+        setCurrentPage(1);
         fetchTrips();
       } else {
         const errData = await res.json();
@@ -173,6 +194,18 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
     }
   };
 
+  const handleSort = (field: string) => {
+    const isAsc = sortField === field && sortOrder === 'ASC';
+    setSortOrder(isAsc ? 'DESC' : 'ASC');
+    setSortField(field);
+    setCurrentPage(1);
+  };
+
+  const renderSortArrow = (field: string) => {
+    if (sortField !== field) return null;
+    return sortOrder === 'ASC' ? ' ▲' : ' ▼';
+  };
+
   const toggleExpandTrip = (tripId: string) => {
     if (expandedTripId === tripId) {
       setExpandedTripId(null);
@@ -181,13 +214,8 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
     }
   };
 
-  // Pagination calculation
-  const indexOfLastTrip = currentPage * pageSize;
-  const indexOfFirstTrip = indexOfLastTrip - pageSize;
-  const currentTrips = trips.slice(indexOfFirstTrip, indexOfLastTrip);
-  const totalPages = Math.ceil(trips.length / pageSize);
-
   const canUpload = currentRole === 'Admin' || currentRole === 'Ops User';
+  const canDelete = currentRole === 'Admin' || currentRole === 'Ops User';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -223,7 +251,6 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
               accept=".xlsx,.xls"
             />
             
-            {/* Excel Icon */}
             <svg style={{ width: '48px', height: '48px', color: '#10b981' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -273,13 +300,13 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                   <th>Record Count</th>
                   <th>Uploaded By</th>
                   <th>Timestamp</th>
-                  {currentRole === 'Admin' && <th style={{ textAlign: 'center' }}>Actions</th>}
+                  {canDelete && <th style={{ textAlign: 'center' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {uploads.length === 0 ? (
                   <tr>
-                    <td colSpan={currentRole === 'Admin' ? 5 : 4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
+                    <td colSpan={canDelete ? 5 : 4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
                       No upload history found in the database.
                     </td>
                   </tr>
@@ -296,7 +323,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                       <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                         {new Date(up.uploaded_at).toLocaleString()}
                       </td>
-                      {currentRole === 'Admin' && (
+                      {canDelete && (
                         <td style={{ textAlign: 'center' }}>
                           <button
                             onClick={() => handleDeleteUpload(up.upload_id, up.file_name)}
@@ -309,7 +336,6 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                             }}
                             title="Delete upload and associated trips"
                           >
-                            {/* Trash Icon */}
                             <svg style={{ width: '18px', height: '18px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
@@ -331,13 +357,15 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
           <h3 style={{ fontSize: '1.25rem', color: '#fff', margin: 0 }}>Browse Trip Database</h3>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '400px' }}>
-            {/* Search Input */}
             <div style={{ position: 'relative', width: '100%' }}>
               <input
                 type="text"
                 placeholder="Search vehicle, destination, invoice, or LR..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
                 style={{ paddingLeft: '36px' }}
               />
               <svg 
@@ -354,28 +382,43 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
 
         {/* Trips Table */}
         <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ minWidth: '900px' }}>
+          <table style={{ minWidth: '1000px' }}>
             <thead>
               <tr>
                 <th style={{ width: '40px' }}></th>
-                <th>Trip No</th>
-                <th>Vehicle No</th>
-                <th>Destination</th>
-                <th>Invoice No</th>
-                <th>LR No</th>
-                <th style={{ textAlign: 'right' }}>Inv Qty (MT)</th>
-                <th>Upload Audit Time</th>
+                <th onClick={() => handleSort('trip_no')} style={{ cursor: 'pointer' }}>
+                  Trip No {renderSortArrow('trip_no')}
+                </th>
+                <th onClick={() => handleSort('trip_vehicle')} style={{ cursor: 'pointer' }}>
+                  Vehicle No {renderSortArrow('trip_vehicle')}
+                </th>
+                <th onClick={() => handleSort('destination')} style={{ cursor: 'pointer' }}>
+                  Destination {renderSortArrow('destination')}
+                </th>
+                <th onClick={() => handleSort('inv_no')} style={{ cursor: 'pointer' }}>
+                  Invoice No {renderSortArrow('inv_no')}
+                </th>
+                <th onClick={() => handleSort('lr_no')} style={{ cursor: 'pointer' }}>
+                  LR No {renderSortArrow('lr_no')}
+                </th>
+                <th>Linkage</th>
+                <th onClick={() => handleSort('inv_qty')} style={{ cursor: 'pointer', textAlign: 'right' }}>
+                  Inv Qty (MT) {renderSortArrow('inv_qty')}
+                </th>
+                <th onClick={() => handleSort('uploaded_at')} style={{ cursor: 'pointer' }}>
+                  Upload Audit Time {renderSortArrow('uploaded_at')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {currentTrips.length === 0 ? (
+              {trips.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '36px' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '36px' }}>
                     No trip records match the criteria or database is empty.
                   </td>
                 </tr>
               ) : (
-                currentTrips.map((trip) => {
+                trips.map((trip) => {
                   const isExpanded = expandedTripId === trip.trip_id;
                   return (
                     <Fragment key={trip.trip_id}>
@@ -384,7 +427,6 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                         style={{ cursor: 'pointer' }}
                       >
                         <td>
-                          {/* Chevron Icon */}
                           <svg 
                             style={{ 
                               width: '16px', 
@@ -409,6 +451,33 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                         <td>{trip.destination || '-'}</td>
                         <td>{trip.inv_no || '-'}</td>
                         <td>{trip.lr_no || '-'}</td>
+                        <td>
+                          {trip.document_id ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onViewDocument(trip.document_id!);
+                              }}
+                              className="status-badge status-approved"
+                              style={{ 
+                                border: 'none', 
+                                cursor: 'pointer', 
+                                display: 'inline-flex', 
+                                gap: '4px', 
+                                alignItems: 'center',
+                                padding: '4px 8px',
+                                textDecoration: 'underline'
+                              }}
+                              title="Click to view parsed OCR document"
+                            >
+                              ✅ Linked
+                            </button>
+                          ) : (
+                            <span className="status-badge status-failed" style={{ padding: '4px 8px' }}>
+                              ❌ Unmatched
+                            </span>
+                          )}
+                        </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>
                           {trip.inv_qty !== null ? trip.inv_qty.toLocaleString(undefined, { minimumFractionDigits: 3 }) : '-'}
                         </td>
@@ -420,7 +489,7 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
                       {/* Expandable detail row */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={8} style={{ padding: '0 0 0 40px', background: 'rgba(255,255,255,0.015)' }}>
+                          <td colSpan={9} style={{ padding: '0 0 0 40px', background: 'rgba(255,255,255,0.015)' }}>
                             <div style={{ 
                               display: 'grid', 
                               gridTemplateColumns: 'repeat(4, 1fr)', 
@@ -505,32 +574,57 @@ export default function TripDashboard({ currentRole }: TripDashboardProps) {
             </select>
             <span>entries</span>
             <span style={{ marginLeft: '12px' }}>
-              (Showing {indexOfFirstTrip + 1} to {Math.min(indexOfLastTrip, trips.length)} of {trips.length} entries)
+              (Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalResults)} of {totalResults} entries)
             </span>
           </div>
-          {trips.length > pageSize && (
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <button 
-                className="btn btn-secondary" 
-                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} 
-                disabled={currentPage === 1}
-              >
-                Previous
-              </button>
-              <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 600 }}>
-                Page {currentPage} of {totalPages}
-              </span>
-              <button 
-                className="btn btn-secondary" 
-                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} 
-                disabled={currentPage === totalPages}
-              >
-                Next
-              </button>
-            </div>
-          )}
+
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button 
+              className="btn btn-secondary" 
+              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} 
+              disabled={currentPage === 1}
+            >
+              Previous
+            </button>
+            <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 600 }}>
+              Page {currentPage} of {totalPages}
+            </span>
+            
+            {/* Page Jump Textbox */}
+            <input
+              type="number"
+              min="1"
+              max={totalPages}
+              value={currentPage}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (val >= 1 && val <= totalPages) {
+                  setCurrentPage(val);
+                }
+              }}
+              style={{
+                width: '50px',
+                padding: '4px 8px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                color: '#fff',
+                fontSize: '0.8rem',
+                textAlign: 'center'
+              }}
+              title="Jump to page"
+            />
+            
+            <button 
+              className="btn btn-secondary" 
+              style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} 
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>

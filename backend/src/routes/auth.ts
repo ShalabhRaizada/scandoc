@@ -36,6 +36,11 @@ router.post('/login', async (req: Request, res: Response) => {
       [sessionId, user.user_id, expiresAt]
     );
 
+    await execute(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = $1',
+      [user.user_id]
+    );
+
     res.json({
       session_id: sessionId,
       user: {

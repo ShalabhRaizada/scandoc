@@ -42,7 +42,7 @@ export async function initDatabase(): Promise<void> {
   }
 
   // Set up SQLite
-  const dbPath = path.resolve(process.cwd(), 'scandoc.db');
+  const dbPath = path.resolve(__dirname, '../../scandoc.db');
   console.log(`Initializing SQLite database at: ${dbPath}`);
   sqliteDb = new Database(dbPath);
   isPostgres = false;
@@ -81,6 +81,14 @@ export async function initDatabase(): Promise<void> {
   try {
     sqliteDb.exec("ALTER TABLE document_embeddings ADD COLUMN metadata_json TEXT;");
   } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE document_batches ADD COLUMN customer_name TEXT;");
+    console.log("Added customer_name column to document_batches table.");
+  } catch (e) {}
+  try {
+    sqliteDb.exec("ALTER TABLE users ADD COLUMN last_login TEXT;");
+    console.log("Added last_login column to users table.");
+  } catch (e) {}
 
   await seedDefaultUsers();
 }
@@ -114,6 +122,26 @@ async function runPgSchema() {
     console.error('Error adding metadata columns to PostgreSQL document_embeddings:', err);
   }
 
+  try {
+    await pgPool.query(`
+      ALTER TABLE document_batches 
+      ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255);
+    `);
+    console.log("Added customer_name column to PostgreSQL document_batches.");
+  } catch (err) {
+    console.error('Error adding customer_name column to PostgreSQL document_batches:', err);
+  }
+
+  try {
+    await pgPool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;
+    `);
+    console.log("Added last_login column to PostgreSQL users.");
+  } catch (err) {
+    console.error('Error adding last_login column to PostgreSQL users:', err);
+  }
+
   // Check if search_vector column and trigger are already set up
   try {
     await pgPool.query('SELECT search_vector FROM documents LIMIT 1');
@@ -140,7 +168,8 @@ function runSqliteSchema() {
         total_documents INTEGER,
         successful_documents INTEGER DEFAULT 0,
         failed_documents INTEGER DEFAULT 0,
-        status TEXT
+        status TEXT,
+        customer_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS documents (
@@ -262,6 +291,7 @@ function runSqliteSchema() {
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL,
+        last_login TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -415,6 +445,7 @@ async function seedDefaultUsers() {
       console.log('Successfully seeded default users.');
     }
     await backfillTokenMetrics();
+    await runSelfHealingMigrations();
   } catch (err) {
     console.error('Error seeding default users:', err);
   }
@@ -442,5 +473,67 @@ async function backfillTokenMetrics() {
     }
   } catch (err) {
     console.error('Error back-filling token metrics:', err);
+  }
+}
+
+async function runSelfHealingMigrations() {
+  try {
+    console.log('Running self-healing database migrations...');
+    // 1. Repair token counts and costs
+    await execute(`
+      UPDATE documents 
+      SET total_tokens = COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0) 
+      WHERE total_tokens IS NULL OR total_tokens <> (COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0))
+    `);
+    
+    await execute(`
+      UPDATE documents 
+      SET token_cost = (COALESCE(prompt_tokens, 0) * 0.075 + COALESCE(completion_tokens, 0) * 0.30) / 1000000.0
+      WHERE token_cost IS NULL OR token_cost = 0
+    `);
+
+    // 2. Normalize trip destinations casing to Title Case
+    const allTrips = await query("SELECT trip_id, destination FROM trips WHERE destination IS NOT NULL AND destination <> ''");
+    const toTitleCase = (str: string) => {
+      return str
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+    };
+    
+    console.log(`Checking casing for ${allTrips.length} trip records...`);
+    let updatedCount = 0;
+    
+    // For SQLite, update in batch using transactions if possible
+    if (!isPostgres && sqliteDb) {
+      const updateStmt = sqliteDb.prepare("UPDATE trips SET destination = ? WHERE trip_id = ?");
+      const transaction = sqliteDb.transaction((rows: any[]) => {
+        for (const row of rows) {
+          const tc = toTitleCase(row.destination);
+          if (tc !== row.destination) {
+            updateStmt.run(tc, row.trip_id);
+            updatedCount++;
+          }
+        }
+      });
+      transaction(allTrips);
+    } else {
+      // Postgres
+      for (const row of allTrips) {
+        const tc = toTitleCase(row.destination);
+        if (tc !== row.destination) {
+          await execute("UPDATE trips SET destination = $1 WHERE trip_id = $2", [tc, row.trip_id]);
+          updatedCount++;
+        }
+      }
+    }
+    
+    if (updatedCount > 0) {
+      console.log(`Normalized casing of ${updatedCount} trip destinations to Title Case.`);
+    }
+    console.log('Self-healing database migrations completed successfully.');
+  } catch (err: any) {
+    console.error('Error running self-healing migrations:', err.message);
   }
 }

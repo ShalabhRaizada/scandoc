@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS document_batches (
     total_documents INTEGER,
     successful_documents INTEGER DEFAULT 0,
     failed_documents INTEGER DEFAULT 0,
-    status VARCHAR(50)
+    status VARCHAR(50),
+    customer_name VARCHAR(255)
 );
 
 -- Table: documents
@@ -159,6 +160,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(100) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL,
+    last_login TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

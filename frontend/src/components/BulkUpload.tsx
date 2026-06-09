@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from '../config';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 interface BulkUploadProps {
   currentRole: string;
@@ -12,11 +12,34 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
   const [customerName, setCustomerName] = useState('');
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [customers, setCustomers] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.tiff'];
   const maxFileSize = 10 * 1024 * 1024; // 10MB
   const maxFiles = 10;
+
+  // Load customer suggestions
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/customers`);
+        if (res.ok) {
+          const data = await res.json();
+          setCustomers(data);
+        }
+      } catch (err) {
+        console.error('Error fetching customers:', err);
+      }
+    };
+    fetchCustomers();
+  }, []);
+
+  const filteredCustomers = customers.filter(c => 
+    c.toLowerCase().includes(customerName.toLowerCase())
+  );
 
   const validateFiles = (newFiles: File[]): boolean => {
     const errors: string[] = [];
@@ -79,13 +102,37 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
     setBatchName('');
     setCustomerName('');
     setValidationErrors([]);
+    setUploadProgress({});
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleUpload = async () => {
-    if (files.length === 0) return;
+    if (files.length === 0 || batchName.trim() === '' || customerName.trim() === '') return;
     setIsUploading(true);
     setValidationErrors([]);
+
+    // Initialize progress simulation
+    const progress: {[key: string]: number} = {};
+    files.forEach(f => { progress[f.name] = 0; });
+    setUploadProgress(progress);
+
+    const progressInterval = setInterval(() => {
+      setUploadProgress((prev) => {
+        const next = { ...prev };
+        let allDone = true;
+        for (const name in next) {
+          if (next[name] < 90) {
+            next[name] += Math.floor(Math.random() * 15) + 5;
+            if (next[name] > 90) next[name] = 90;
+            allDone = false;
+          }
+        }
+        if (allDone) {
+          clearInterval(progressInterval);
+        }
+        return next;
+      });
+    }, 150);
 
     const formData = new FormData();
     files.forEach((file) => {
@@ -129,16 +176,26 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
         console.error('Failed to trigger background extraction.');
       }
 
+      clearInterval(progressInterval);
+      const finalProgress: {[key: string]: number} = {};
+      files.forEach(f => { finalProgress[f.name] = 100; });
+      setUploadProgress(finalProgress);
+
       // Notify parent about success to switch tab and set active batch
       onUploadSuccess(batchId);
     } catch (err: any) {
+      clearInterval(progressInterval);
       setValidationErrors([err.message || 'An unexpected error occurred.']);
     } finally {
       setIsUploading(false);
     }
   };
 
-  const canUpload = files.length > 0 && !isUploading && (currentRole === 'Admin' || currentRole === 'Ops User');
+  const canUpload = files.length > 0 && 
+                    !isUploading && 
+                    batchName.trim() !== '' && 
+                    customerName.trim() !== '' && 
+                    (currentRole === 'Admin' || currentRole === 'Ops User');
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
@@ -146,8 +203,10 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
 
       <div className="glass-panel" style={{ padding: '32px', marginBottom: '24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
-          <div>
-            <label htmlFor="batchName">Document Batch Name</label>
+          <div style={{ position: 'relative' }}>
+            <label htmlFor="batchName" style={{ display: 'block', marginBottom: '8px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              Document Batch Name <span style={{ color: 'var(--color-danger)' }}>*</span>
+            </label>
             <input
               id="batchName"
               type="text"
@@ -155,18 +214,78 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
               value={batchName}
               onChange={(e) => setBatchName(e.target.value)}
               disabled={isUploading}
+              style={{
+                borderColor: batchName.trim() === '' && files.length > 0 ? 'rgba(239, 68, 68, 0.4)' : undefined
+              }}
             />
+            {batchName.trim() === '' && files.length > 0 && (
+              <span style={{ fontSize: '0.75rem', color: '#f87171', marginTop: '4px', display: 'block' }}>Batch name is required</span>
+            )}
           </div>
-          <div>
-            <label htmlFor="customerName">Customer</label>
+          <div style={{ position: 'relative' }}>
+            <label htmlFor="customerName" style={{ display: 'block', marginBottom: '8px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              Customer <span style={{ color: 'var(--color-danger)' }}>*</span>
+            </label>
             <input
               id="customerName"
               type="text"
               placeholder="e.g. Tata Steel Limited"
               value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
+              onChange={(e) => {
+                setCustomerName(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                setTimeout(() => setShowSuggestions(false), 200);
+              }}
               disabled={isUploading}
+              style={{
+                borderColor: customerName.trim() === '' && files.length > 0 ? 'rgba(239, 68, 68, 0.4)' : undefined
+              }}
             />
+            {customerName.trim() === '' && files.length > 0 && (
+              <span style={{ fontSize: '0.75rem', color: '#f87171', marginTop: '4px', display: 'block' }}>Customer selection is required</span>
+            )}
+            
+            {showSuggestions && filteredCustomers.length > 0 && (
+              <div style={{
+                position: 'absolute',
+                top: '72px',
+                left: 0,
+                right: 0,
+                background: 'rgba(30, 30, 50, 0.95)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+                zIndex: 100,
+                maxHeight: '200px',
+                overflowY: 'auto',
+                backdropFilter: 'blur(10px)'
+              }}>
+                {filteredCustomers.map((cust, idx) => (
+                  <div
+                    key={idx}
+                    onMouseDown={() => {
+                      setCustomerName(cust);
+                      setShowSuggestions(false);
+                    }}
+                    style={{
+                      padding: '10px 16px',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      color: '#fff',
+                      transition: 'background 0.2s',
+                      borderBottom: idx < filteredCustomers.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    🏢 {cust}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -219,35 +338,48 @@ export default function BulkUpload({ currentRole, onUploadSuccess }: BulkUploadP
                   key={idx}
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
+                    flexDirection: 'column',
                     padding: '10px 14px',
                     background: 'rgba(255,255,255,0.03)',
                     borderRadius: 'var(--radius-sm)',
                     border: '1px solid var(--border-color)',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                    <svg style={{ width: '20px', height: '20px', color: 'var(--text-secondary)', flexShrink: 0 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span style={{ fontSize: '0.875rem', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                      {file.name}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      ({(file.size / (1024 * 1024)).toFixed(2)} MB)
-                    </span>
-                  </div>
-                  {!isUploading && (
-                    <button
-                      onClick={() => removeFile(idx)}
-                      style={{ background: 'transparent', padding: '4px', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-                      title="Remove file"
-                    >
-                      <svg style={{ width: '18px', height: '18px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                      <svg style={{ width: '20px', height: '20px', color: 'var(--text-secondary)', flexShrink: 0 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                    </button>
+                      <span style={{ fontSize: '0.875rem', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        {file.name}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        ({(file.size / (1024 * 1024)).toFixed(2)} MB)
+                      </span>
+                    </div>
+                    {!isUploading && (
+                      <button
+                        onClick={() => removeFile(idx)}
+                        style={{ background: 'transparent', padding: '4px', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                        title="Remove file"
+                      >
+                        <svg style={{ width: '18px', height: '18px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  
+                  {isUploading && (
+                    <div style={{ width: '100%', marginTop: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        <span>Staging file...</span>
+                        <span>{uploadProgress[file.name] || 0}%</span>
+                      </div>
+                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ width: `${uploadProgress[file.name] || 0}%`, height: '100%', background: 'linear-gradient(90deg, #4ade80, #10b981)', transition: 'width 0.2s ease' }} />
+                      </div>
+                    </div>
                   )}
                 </div>
               ))}

@@ -80,6 +80,31 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
     fetchMetadata();
   }, [documentId]);
 
+  // Keyboard navigation Alt + [1-4]
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey) {
+        if (e.key === '1') {
+          e.preventDefault();
+          setActiveTab('fields');
+        } else if (e.key === '2') {
+          e.preventDefault();
+          setActiveTab('items');
+        } else if (e.key === '3') {
+          e.preventDefault();
+          setActiveTab('tags');
+        } else if (e.key === '4') {
+          e.preventDefault();
+          setActiveTab('json');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const fetchMetadata = async () => {
     setLoading(true);
     try {
@@ -241,17 +266,20 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <h2 style={{ fontSize: '1.5rem', color: '#fff', margin: 0 }}>
-              Review: {docData.stored_file_name || docData.original_file_name}
+              Document Review Board
             </h2>
             <span className={`status-badge status-${docData.extraction_status.toLowerCase().replace(/\s/g, '')}`} style={{ margin: 0 }}>
               {docData.extraction_status}
             </span>
           </div>
-          {docData.stored_file_name && docData.stored_file_name !== docData.original_file_name && (
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Original file: {docData.original_file_name}
-            </div>
-          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              <strong>Logical Name:</strong> {docData.stored_file_name || 'Not Renamed'}
+            </span>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              <strong>Original Upload Name:</strong> {docData.original_file_name}
+            </span>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button className="btn btn-secondary" onClick={handleDownloadFile}>
@@ -568,13 +596,23 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                         disabled={!isEditable}
                       />
                     </div>
-                    <div>
-                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('eway_bill_number', 'E-way Bill Number', metadata.logistics?.eway_bill_number)}>E-way Bill Number</label>
+                    <div style={{
+                      border: (!metadata.logistics?.eway_bill_number) ? '1px solid #f59e0b' : 'none',
+                      borderRadius: '4px',
+                      padding: (!metadata.logistics?.eway_bill_number) ? '8px' : '0',
+                      background: (!metadata.logistics?.eway_bill_number) ? 'rgba(245, 158, 11, 0.05)' : 'none',
+                    }}>
+                      <label className="highlight-label-clickable" onClick={() => triggerHighlight('eway_bill_number', 'E-way Bill Number', metadata.logistics?.eway_bill_number)}>
+                        E-way Bill Number {!metadata.logistics?.eway_bill_number && <span style={{ color: '#fbbf24', fontSize: '0.75rem' }}>⚠️ Missing / Verify</span>}
+                      </label>
                       <input
                         type="text"
                         value={metadata.logistics?.eway_bill_number || ''}
                         onChange={(e) => handleFieldChange('logistics', 'eway_bill_number', e.target.value)}
                         disabled={!isEditable}
+                        style={{
+                          borderColor: (!metadata.logistics?.eway_bill_number) ? '#fbbf24' : undefined
+                        }}
                       />
                     </div>
                     <div>
@@ -721,14 +759,25 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
                               style={{ padding: '6px 10px', fontSize: '0.85rem' }}
                             />
                           </div>
-                          <div>
-                            <label style={{ fontSize: '0.75rem' }}>Rate (INR)</label>
+                          <div style={{
+                            border: (!item.rate) ? '1px solid #f59e0b' : 'none',
+                            borderRadius: '4px',
+                            padding: (!item.rate) ? '6px' : '0',
+                            background: (!item.rate) ? 'rgba(245, 158, 11, 0.05)' : 'none',
+                          }}>
+                            <label style={{ fontSize: '0.75rem' }}>
+                              Rate (INR) {!item.rate && <span style={{ color: '#fbbf24', fontSize: '0.7rem' }}>⚠️ Zero / Verify</span>}
+                            </label>
                             <input
                               type="number"
                               value={item.rate || 0}
                               onChange={(e) => handleLineItemChange(idx, 'rate', parseFloat(e.target.value))}
                               disabled={!isEditable}
-                              style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                              style={{ 
+                                padding: '6px 10px', 
+                                fontSize: '0.85rem',
+                                borderColor: (!item.rate) ? '#fbbf24' : undefined
+                              }}
                             />
                           </div>
                           <div>
@@ -932,6 +981,18 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
             {/* TAB 4: Raw JSON Preview */}
             {activeTab === 'json' && (
               <div style={{ height: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(metadata, null, 2));
+                      alert('JSON copied to clipboard!');
+                    }}
+                  >
+                    📋 Copy JSON
+                  </button>
+                </div>
                 <pre
                   style={{
                     background: '#090d16',
@@ -954,12 +1015,51 @@ export default function DocumentReview({ documentId, currentRole, onClose }: Doc
           {/* Bottom Action Footer */}
           {isEditable && (
             <div style={{ padding: '16px 24px', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button className="btn btn-secondary" onClick={() => handleSave(false)} disabled={saving}>
-                {saving ? 'Saving...' : 'Save Draft'}
-              </button>
-              <button className="btn btn-primary" onClick={() => handleSave(true)} disabled={saving} style={{ background: 'var(--color-success)' }}>
-                {saving ? 'Processing...' : 'Approve Document'}
-              </button>
+              {(docData.extraction_status === 'Approved' || docData.extraction_status === 'Manually Approved') ? (
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    setSaving(true);
+                    try {
+                      const payload = {
+                        metadata_json: {
+                          ...metadata,
+                          extraction_status: 'Needs Review'
+                        }
+                      };
+                      const res = await fetch(`${getApiBaseUrl()}/api/documents/${documentId}/metadata`, {
+                        method: 'PUT',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'X-User-Role': currentRole,
+                          'X-User': `${currentRole} User`,
+                        },
+                        body: JSON.stringify(payload),
+                      });
+                      if (!res.ok) throw new Error('Failed to reopen document');
+                      alert('Document reopened for review.');
+                      await fetchMetadata();
+                    } catch (err: any) {
+                      alert(err.message);
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                  disabled={saving}
+                  style={{ background: '#eab308' }}
+                >
+                  {saving ? 'Processing...' : '🔓 Reopen for Review'}
+                </button>
+              ) : (
+                <>
+                  <button className="btn btn-secondary" onClick={() => handleSave(false)} disabled={saving}>
+                    {saving ? 'Saving...' : 'Save Draft'}
+                  </button>
+                  <button className="btn btn-primary" onClick={() => handleSave(true)} disabled={saving} style={{ background: 'var(--color-success)' }}>
+                    {saving ? 'Processing...' : 'Approve Document'}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

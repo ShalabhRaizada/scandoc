@@ -20,6 +20,7 @@ interface Document {
   handwriting_detected: boolean;
   extraction_status: string;
   confidence_score: number;
+  metadata_json?: any;
 }
 
 interface BatchStatus {
@@ -34,6 +35,7 @@ interface BatchStatus {
 interface BatchItem {
   batch_id: string;
   batch_name: string;
+  customer_name?: string;
   uploaded_by: string;
   uploaded_at: string;
   total_documents: number;
@@ -84,17 +86,11 @@ export default function ProcessingStatus({
   const fetchBatches = async () => {
     setLoading(true);
     try {
-      // We can query all documents or search batches. Since we don't have a direct batch search API,
-      // we can query standard search or we'll fetch from a simple query.
-      // Wait, is there a GET /api/document-batches endpoint? No, but let's query all audit logs or search
-      // to see. Wait! We can add a GET /api/document-batches endpoint in api.ts to make batch list clean,
-      // or we can fetch them. Let's add GET /api/document-batches to api.ts so the batch list is fully populated.
       const res = await fetch(`${getApiBaseUrl()}/api/document-batches`);
       if (res.ok) {
         const data = await res.json();
         setBatches(data);
       } else {
-        // Fallback if endpoint doesn't exist yet
         setBatches([]);
       }
     } catch (err) {
@@ -177,6 +173,7 @@ export default function ProcessingStatus({
               <thead>
                 <tr>
                   <th>Batch Name</th>
+                  <th>Customer</th>
                   <th>Uploaded By</th>
                   <th>Uploaded At</th>
                   <th>Total Documents</th>
@@ -188,6 +185,7 @@ export default function ProcessingStatus({
                 {batches.map((b) => (
                   <tr key={b.batch_id}>
                     <td style={{ fontWeight: 600, color: '#fff' }}>{b.batch_name}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{b.customer_name || '-'}</td>
                     <td>{b.uploaded_by}</td>
                     <td>{new Date(b.uploaded_at).toLocaleString()}</td>
                     <td>{b.total_documents}</td>
@@ -284,22 +282,38 @@ export default function ProcessingStatus({
               {documents.map((doc) => {
                 const canEdit = currentRole === 'Admin' || currentRole === 'Ops User';
                 const statusLower = doc.extraction_status.toLowerCase();
-                const isReady = statusLower === 'extracted' || statusLower === 'needs review' || statusLower === 'approved';
+                const isReady = statusLower === 'extracted' || statusLower === 'needs review' || statusLower === 'approved' || statusLower === 'manually approved';
 
                 return (
                   <tr key={doc.document_id}>
-                    <td style={{ maxWidth: '180px' }} title={`Original: ${doc.original_file_name}`}>
+                    <td style={{ maxWidth: '200px' }} title={`Original: ${doc.original_file_name}`}>
                       <div style={{ fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {doc.stored_file_name || doc.original_file_name}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {doc.stored_file_name && doc.stored_file_name !== doc.original_file_name ? `${doc.original_file_name} (${formatSize(doc.file_size_bytes)})` : formatSize(doc.file_size_bytes)}
                       </div>
+                      
+                      {statusLower === 'failed' && doc.metadata_json && doc.metadata_json.error && (
+                        <div style={{
+                          marginTop: '6px',
+                          padding: '6px 10px',
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          border: '1px solid rgba(239, 68, 68, 0.2)',
+                          borderRadius: '4px',
+                          color: '#f87171',
+                          fontSize: '0.75rem',
+                          wordBreak: 'break-word',
+                          whiteSpace: 'normal'
+                        }}>
+                          ❌ Error: {doc.metadata_json.error}
+                        </div>
+                      )}
                     </td>
                     <td>{doc.document_type || <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td style={{ fontWeight: 600 }}>{doc.primary_reference_number || <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>{doc.vehicle_number || <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
-                    <td>{doc.document_date ? new Date(doc.document_date).toLocaleDateString() : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
+                    <td>{doc.document_date ? new Date(doc.document_date).toLocaleDateString('en-GB') : <span style={{ color: 'var(--text-muted)' }}>-</span>}</td>
                     <td>
                       {doc.document_type ? (
                         <span className={`tag-indicator ${doc.seal_detected ? 'tag-detected' : 'tag-absent'}`}>
@@ -333,7 +347,7 @@ export default function ProcessingStatus({
                           className="btn btn-secondary"
                           style={{ padding: '6px 10px', fontSize: '0.75rem' }}
                           onClick={() => onViewDocument(doc.document_id)}
-                          title="View document"
+                          title="View review board"
                         >
                           👁️
                         </button>
@@ -342,7 +356,7 @@ export default function ProcessingStatus({
                             className="btn btn-secondary"
                             style={{ padding: '6px 10px', fontSize: '0.75rem', borderColor: 'var(--color-primary)' }}
                             onClick={() => onEditDocument(doc.document_id)}
-                            title="Edit metadata"
+                            title="Edit metadata fields"
                           >
                             ✏️
                           </button>
@@ -361,7 +375,7 @@ export default function ProcessingStatus({
                               className="btn btn-secondary"
                               style={{ padding: '6px 10px', fontSize: '0.75rem' }}
                               onClick={() => handleDownloadJson(doc.document_id)}
-                              title="Download JSON metadata"
+                              title="Download JSON metadata file"
                             >
                               JSON
                             </button>

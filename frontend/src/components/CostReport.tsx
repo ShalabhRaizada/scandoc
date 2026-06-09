@@ -10,8 +10,22 @@ interface ReportStats {
   average_cost_per_document: number;
 }
 
+interface CostTrend {
+  date: string;
+  cost: number;
+  count: number;
+}
+
+interface DocTypeCost {
+  document_type: string;
+  cost: number;
+  count: number;
+}
+
 export default function CostReport() {
   const [stats, setStats] = useState<ReportStats | null>(null);
+  const [trends, setTrends] = useState<CostTrend[]>([]);
+  const [docTypes, setDocTypes] = useState<DocTypeCost[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,16 +35,34 @@ export default function CostReport() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/reports/token-usage`, {
-        headers: {
-          'Authorization': `Bearer ${getSessionToken()}`
-        }
-      });
-      const data = await res.json();
-      if (!res.ok) {
+      const token = getSessionToken();
+      const headers = {
+        'Authorization': `Bearer ${token}`
+      };
+
+      const [resUsage, resTrends, resDocTypes] = await Promise.all([
+        fetch(`${getApiBaseUrl()}/api/reports/token-usage`, { headers }),
+        fetch(`${getApiBaseUrl()}/api/reports/cost-trends`, { headers }),
+        fetch(`${getApiBaseUrl()}/api/reports/by-doc-type`, { headers })
+      ]);
+
+      if (!resUsage.ok) {
+        const data = await resUsage.json();
         throw new Error(data.error || 'Failed to fetch reporting statistics.');
       }
-      setStats(data);
+
+      const usageData = await resUsage.json();
+      setStats(usageData);
+
+      if (resTrends.ok) {
+        const trendsData = await resTrends.json();
+        setTrends(trendsData);
+      }
+
+      if (resDocTypes.ok) {
+        const docTypesData = await resDocTypes.json();
+        setDocTypes(docTypesData);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -44,7 +76,6 @@ export default function CostReport() {
 
   const formatCost = (num: number) => {
     if (num === 0) return '$0.00';
-    // Return high precision if cost is very small
     if (num < 0.01) {
       return '$' + num.toFixed(6);
     }
@@ -63,8 +94,17 @@ export default function CostReport() {
     ? Math.round((stats.total_completion_tokens / stats.total_tokens) * 100)
     : 0;
 
+  const maxTrendCost = Math.max(...trends.map(t => t.cost), 0.0001);
+  const maxCatCost = Math.max(...docTypes.map(d => d.cost), 0.0001);
+
   return (
     <div>
+      <style>{`
+        .chart-bar-container:hover .chart-tooltip {
+          opacity: 1 !important;
+        }
+      `}</style>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <h2 style={{ fontSize: '1.75rem', margin: 0, color: '#fff' }}>Token & Cost Report</h2>
         <button
@@ -147,6 +187,108 @@ export default function CostReport() {
               <div style={{ fontSize: '0.75rem', color: 'rgba(251,191,36,0.7)', marginTop: '8px' }}>
                 📈 average scan unit expense
               </div>
+            </div>
+
+          </div>
+
+          {/* Cost Trends Charts (Task 18) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.6fr', gap: '24px' }}>
+            
+            {/* Daily Usage Cost Trend Bar Chart */}
+            <div className="glass-panel" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '1.25rem', color: '#fff' }}>Daily API Cost Trends</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px' }}>Daily token spending history over the last 7 days</p>
+              
+              {trends.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  No historical trend data available
+                </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '200px', padding: '10px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', marginTop: '20px' }}>
+                  {trends.map((t, idx) => {
+                    const heightPercent = (t.cost / maxTrendCost) * 100;
+                    return (
+                      <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexGrow: 1, height: '100%', justifyContent: 'flex-end', position: 'relative' }} className="chart-bar-container">
+                        
+                        {/* Tooltip */}
+                        <div className="chart-tooltip" style={{
+                          position: 'absolute',
+                          bottom: `${heightPercent + 10}%`,
+                          background: 'rgba(15, 23, 42, 0.95)',
+                          color: '#fff',
+                          padding: '6px 10px',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
+                          zIndex: 10,
+                          opacity: 0,
+                          transition: 'opacity 0.2s ease',
+                          pointerEvents: 'none',
+                          border: '1px solid var(--border-color)',
+                          backdropFilter: 'blur(5px)'
+                        }}>
+                          <strong>Date:</strong> {t.date}<br/>
+                          <strong>Cost:</strong> {formatCost(t.cost)}<br/>
+                          <strong>Documents:</strong> {t.count}
+                        </div>
+                        
+                        {/* Bar */}
+                        <div style={{
+                          width: '24px',
+                          height: `${Math.max(heightPercent, 2)}%`, // minimum 2% height to represent small costs
+                          background: 'linear-gradient(180deg, #10b981 0%, rgba(16, 185, 129, 0.2) 100%)',
+                          borderRadius: '4px 4px 0 0',
+                          transition: 'height 0.5s ease',
+                          cursor: 'pointer'
+                        }} />
+                        
+                        {/* Label */}
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                          {t.date ? t.date.slice(5) : '-'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Cost by Document Category Progress Bars */}
+            <div className="glass-panel" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '1.25rem', color: '#fff' }}>Expenses by Document Category</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px' }}>Cost distribution grouped by document types</p>
+              
+              {docTypes.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  No document category data available
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '220px', overflowY: 'auto' }}>
+                  {docTypes.map((d, idx) => {
+                    const widthPercent = (d.cost / maxCatCost) * 100;
+                    return (
+                      <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                          <span style={{ fontWeight: 600, color: '#fff' }}>📁 {d.document_type}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                            <strong>{formatCost(d.cost)}</strong> ({d.count} docs)
+                          </span>
+                        </div>
+                        <div style={{ height: '12px', background: 'rgba(255,255,255,0.06)', borderRadius: '6px', overflow: 'hidden', width: '100%' }}>
+                          <div style={{ 
+                            width: `${widthPercent}%`, 
+                            height: '100%', 
+                            background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%)', 
+                            borderRadius: '6px', 
+                            transition: 'width 0.5s ease' 
+                          }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
           </div>
