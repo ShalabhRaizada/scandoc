@@ -274,6 +274,7 @@ Return only valid JSON. Do not return explanations. Use the following keys:
  */
 function performGeminiRequest(model: string, requestBody: string, apiKey: string): Promise<any> {
   return new Promise((resolve, reject) => {
+    let timedOut = false;
     const req = https.request(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
@@ -281,11 +282,13 @@ function performGeminiRequest(model: string, requestBody: string, apiKey: string
         headers: {
           'Content-Type': 'application/json',
         },
+        timeout: 15000, // 15 seconds timeout
       },
       (res) => {
         let body = '';
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
+          if (timedOut) return;
           try {
             const parsed = JSON.parse(body);
             if (res.statusCode !== 200) {
@@ -315,7 +318,17 @@ function performGeminiRequest(model: string, requestBody: string, apiKey: string
       }
     );
 
-    req.on('error', (err) => reject(err));
+    req.on('timeout', () => {
+      timedOut = true;
+      req.destroy();
+      reject(new Error(`Request timed out after 15000ms`));
+    });
+
+    req.on('error', (err) => {
+      if (timedOut) return;
+      reject(err);
+    });
+
     req.write(requestBody);
     req.end();
   });
