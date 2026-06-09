@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 let pgPool: Pool | null = null;
 let sqliteDb: any = null;
 let isPostgres = false;
+let pgInitError: string | null = null;
 
 export async function initDatabase(): Promise<void> {
   const usePg = process.env.DB_HOST && process.env.DB_USER && process.env.DB_DATABASE;
@@ -33,6 +34,7 @@ export async function initDatabase(): Promise<void> {
       await runPgSchema();
       return;
     } catch (err: any) {
+      pgInitError = err.message || String(err);
       console.warn('PostgreSQL connection failed. Error:', err.message);
       console.warn('Falling back to SQLite database...');
       pgPool = null;
@@ -406,6 +408,10 @@ export async function execute(sql: string, params: any[] = []): Promise<void> {
  */
 export function getIsPostgres(): boolean {
   return isPostgres;
+}
+
+export function getPgInitError(): string | null {
+  return pgInitError;
 }
 
 export function hashPassword(password: string): string {

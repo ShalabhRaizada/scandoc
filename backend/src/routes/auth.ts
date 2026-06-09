@@ -160,8 +160,9 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
 
   // 1. Test database connection
   try {
-    const { getIsPostgres, queryOne } = require('../config/db');
+    const { getIsPostgres, queryOne, getPgInitError } = require('../config/db');
     diagnostics.database.type = getIsPostgres() ? 'PostgreSQL' : 'SQLite';
+    diagnostics.database.pg_init_error = getPgInitError ? getPgInitError() : null;
     const dbTest = await queryOne('SELECT 1 + 1 as result');
     if (dbTest && (dbTest.result === 2 || dbTest.result === '2')) {
       diagnostics.database.connected = true;
