@@ -547,15 +547,22 @@ router.post(
         [batch_id]
       );
 
-      // Fire off async extractions in parallel (up to 10 in a batch) to capture all concurrently
+      // Fire off async extractions with a concurrency limit of 2 to avoid rate limits / 503 high demand errors on free-tier keys
       (async () => {
         try {
-          const extractionPromises = docs.map(doc => 
-            processDocumentExtraction(doc.document_id, batch_id, uploadedBy)
-          );
-          await Promise.all(extractionPromises);
+          const concurrencyLimit = 2;
+          const queue = [...docs];
+          const workers = Array.from({ length: Math.min(concurrencyLimit, docs.length) }, async () => {
+            while (queue.length > 0) {
+              const doc = queue.shift();
+              if (doc) {
+                await processDocumentExtraction(doc.document_id, batch_id, uploadedBy);
+              }
+            }
+          });
+          await Promise.all(workers);
         } catch (parallelErr) {
-          console.error(`Error in parallel batch extraction:`, parallelErr);
+          console.error(`Error in chunked batch extraction:`, parallelErr);
         }
 
         // Check if all processed and update batch final status

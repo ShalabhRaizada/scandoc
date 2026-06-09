@@ -116,11 +116,19 @@ export async function extractDocumentMetadata(
       } catch (e: any) {
         attempt++;
         const errStr = String(e.message || e);
-        const isRateLimit = errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('quota') || errStr.includes('Quota');
+        const isTransientError = 
+          errStr.includes('429') || 
+          errStr.includes('503') ||
+          errStr.includes('RESOURCE_EXHAUSTED') || 
+          errStr.includes('quota') || 
+          errStr.includes('Quota') ||
+          errStr.includes('high demand') ||
+          errStr.includes('temporary') ||
+          errStr.includes('overloaded');
 
-        if (isRateLimit && attempt < maxRetries) {
-          const delayMs = attempt * 5000; // 5s, 10s backoff
-          console.warn(`Gemini API rate limited (429). Retrying in ${delayMs / 1000}s...`);
+        if (isTransientError && attempt < maxRetries) {
+          const delayMs = attempt * 5000 + Math.floor(Math.random() * 5000); // 5s-10s, 10s-15s backoff with random jitter
+          console.warn(`Gemini API transient failure or rate limit hit. Retrying in ${delayMs / 1000}s...`);
           await new Promise((r) => setTimeout(r, delayMs));
         } else {
           console.error(`Gemini API call failed on attempt ${attempt}:`, e.message);
@@ -282,7 +290,7 @@ function performGeminiRequest(model: string, requestBody: string, apiKey: string
         headers: {
           'Content-Type': 'application/json',
         },
-        timeout: 15000, // 15 seconds timeout
+        timeout: 30000, // 30 seconds timeout
       },
       (res) => {
         let body = '';
@@ -321,7 +329,7 @@ function performGeminiRequest(model: string, requestBody: string, apiKey: string
     req.on('timeout', () => {
       timedOut = true;
       req.destroy();
-      reject(new Error(`Request timed out after 15000ms`));
+      reject(new Error(`Request timed out after 30000ms`));
     });
 
     req.on('error', (err) => {
