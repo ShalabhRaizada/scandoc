@@ -210,7 +210,7 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              timeout: 5000
+              timeout: 15000
             },
             (apiRes: any) => {
               let body = '';

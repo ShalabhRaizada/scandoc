@@ -52,6 +52,7 @@ export default function App() {
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [showReview, setShowReview] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<string | null>(null);
 
   // Sync state from window location path
   const syncStateFromUrl = () => {
@@ -131,6 +132,36 @@ export default function App() {
     };
   }, [sessionToken, currentUser]);
 
+  const checkHealthStatus = async (token?: string) => {
+    try {
+      const activeToken = token || sessionToken;
+      if (!activeToken) return;
+      setSystemStatus('Checking...');
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${activeToken}`
+      };
+      const res = await originalFetch(`${getApiBaseUrl()}/api/auth/diagnostics`, { headers });
+      if (!res.ok) {
+        setSystemStatus('Revving Up');
+        return;
+      }
+      const data = await res.json();
+      
+      const isDbHealthy = data.database?.connected === true && !data.database?.pg_init_error;
+      const isGcsHealthy = !data.gcs?.enabled || data.gcs?.connected === true;
+      const isGeminiHealthy = data.gemini?.test_call_success === true;
+      
+      if (isDbHealthy && isGcsHealthy && isGeminiHealthy) {
+        setSystemStatus('Ready to Drive');
+      } else {
+        setSystemStatus('Revving Up');
+      }
+    } catch (err) {
+      console.error('Diagnostics check failed:', err);
+      setSystemStatus('Revving Up');
+    }
+  };
+
   // Verify session on app load
   useEffect(() => {
     const verifySession = async () => {
@@ -147,6 +178,7 @@ export default function App() {
         const data = await res.json();
         if (res.ok && data.user) {
           setCurrentUser(data.user);
+          checkHealthStatus(sessionToken);
         } else {
           localStorage.removeItem('scandoc_session');
           setSessionToken(null);
@@ -165,6 +197,7 @@ export default function App() {
     localStorage.setItem('scandoc_session', token);
     setSessionToken(token);
     setCurrentUser({ username: user.username, role: user.role as UserRole });
+    checkHealthStatus(token);
   };
 
   const handleLogout = async () => {
@@ -181,6 +214,7 @@ export default function App() {
     localStorage.removeItem('scandoc_session');
     setSessionToken(null);
     setCurrentUser(null);
+    setSystemStatus(null);
     window.history.pushState(null, '', '/');
   };
 
@@ -379,9 +413,48 @@ export default function App() {
         <span>
           🔑 <strong>Role Permissions:</strong> {getRolePermissions(currentUser.role)}
         </span>
-        <span style={{ color: 'var(--text-muted)' }}>
-          Session active
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {systemStatus === 'Ready to Drive' && (
+            <span style={{ 
+              color: '#4ade80', 
+              fontWeight: 600, 
+              background: 'rgba(74, 222, 128, 0.1)', 
+              padding: '2px 8px', 
+              borderRadius: '4px',
+              border: '1px solid rgba(74, 222, 128, 0.2)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <span className="pulse-green" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} />
+              Ready to Drive
+            </span>
+          )}
+          {systemStatus === 'Revving Up' && (
+            <span style={{ 
+              color: '#fbbf24', 
+              fontWeight: 600, 
+              background: 'rgba(251, 191, 36, 0.1)', 
+              padding: '2px 8px', 
+              borderRadius: '4px',
+              border: '1px solid rgba(251, 191, 36, 0.2)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <span className="pulse-yellow" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }} />
+              Revving Up
+            </span>
+          )}
+          {systemStatus === 'Checking...' && (
+            <span style={{ color: 'var(--text-muted)' }}>
+              Checking connection...
+            </span>
+          )}
+          <span style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+            • Session active
+          </span>
+        </div>
       </div>
 
       {/* Main View Container */}
